@@ -16,11 +16,10 @@ import edge_tts
 import re
 import random
 import os
-# Import library video
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip
 
 # --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="AI Story Video Pro (Fixed)", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="AI Story Video Pro (Download Fix)", page_icon="🛡️", layout="wide")
 
 # --- AMBIL API KEY DARI SECRETS ---
 try:
@@ -31,6 +30,12 @@ except FileNotFoundError:
 except KeyError:
     st.error("⚠️ Key `GEMINI_API_KEY` tidak ditemukan di secrets!")
     st.stop()
+
+# --- SESSION STATE (Memori Agar Data Tidak Hilang) ---
+if 'generated_scenes' not in st.session_state: st.session_state['generated_scenes'] = []
+if 'ai_images_data' not in st.session_state: st.session_state['ai_images_data'] = {}
+# TAMBAHAN BARU: Simpan path video final di sini
+if 'final_video_path' not in st.session_state: st.session_state['final_video_path'] = None
 
 # --- FUNGSI BANTUAN ---
 def extract_json(text):
@@ -96,57 +101,41 @@ def create_final_video(assets):
         try:
             log_box.info(f"⚙️ Memproses Clip {i+1} dari {len(assets)}...")
             
-            # 1. Load & Sanitasi Gambar
+            # Load & Sanitasi Gambar
             original_img = PIL.Image.open(asset['image'])
             if original_img.mode != 'RGB':
                 original_img = original_img.convert('RGB')
             
-            # Gunakan LANCZOS karena kita sudah mengimport PIL di atas
             clean_img = original_img.resize((W, H), PIL.Image.LANCZOS)
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
                 clean_img.save(f, quality=95)
                 clean_img_path = f.name
             
-            # 2. Setup Audio
+            # Setup Audio & Video
             audio = AudioFileClip(asset['audio'])
             duration = audio.duration + 0.5
             
-            # 3. Clip Video
             img_clip = ImageClip(clean_img_path).set_duration(duration)
-            
-            # 4. Zoom Out (Sekarang aman karena patch ANTIALIAS di atas)
             img_clip = img_clip.resize(lambda t: 1.1 - (0.005 * t))
             img_clip = img_clip.set_position('center')
             
             final_clip = CompositeVideoClip([img_clip], size=(W, H))
             final_clip = final_clip.set_audio(audio)
             final_clip = final_clip.set_fps(24)
-            
             clips.append(final_clip)
             
         except Exception as e:
             st.error(f"❌ Error Scene {i+1}: {str(e)}")
             continue
 
-    if not clips:
-        st.error("Tidak ada clip yang berhasil dibuat.")
-        return None
+    if not clips: return None
         
     try:
         log_box.info("🎞️ Rendering Final...")
         output_path = tempfile.mktemp(suffix=".mp4")
-        
         final_video = concatenate_videoclips(clips, method="compose")
-        final_video.write_videofile(
-            output_path, 
-            fps=24, 
-            codec='libx264', 
-            audio_codec='aac', 
-            preset='ultrafast',
-            threads=1, 
-            logger=None
-        )
+        final_video.write_videofile(output_path, fps=24, codec='libx264', audio_codec='aac', preset='ultrafast', threads=1, logger=None)
         log_box.success("✅ Selesai!")
         return output_path
     except Exception as e:
@@ -154,19 +143,19 @@ def create_final_video(assets):
         return None
 
 # ================= UI APLIKASI =================
-if 'generated_scenes' not in st.session_state: st.session_state['generated_scenes'] = []
-if 'ai_images_data' not in st.session_state: st.session_state['ai_images_data'] = {}
 
 st.sidebar.title("⚙️ Pengaturan")
 voice_gender = st.sidebar.selectbox("Suara", ["Cowok (Ardi)", "Cewek (Gadis)"])
 num_scenes = st.sidebar.slider("Jumlah Scene", 1, 100, 5)
 
 if st.sidebar.button("🗑️ Reset Baru"):
+    # Reset semua session state
     st.session_state['generated_scenes'] = []
     st.session_state['ai_images_data'] = {}
+    st.session_state['final_video_path'] = None # Reset video juga
     st.rerun()
 
-st.title("🎬 AI Video Maker (Auto-Fix)")
+st.title("🎬 AI Video Maker (Download Ready)")
 st.markdown("---")
 
 # INPUT SECTION
@@ -174,12 +163,19 @@ if not st.session_state['generated_scenes']:
     c1, c2 = st.columns([1, 2])
     with c1:
         st.info("Karakter")
-        char_desc = st.text_area("Deskripsi:", height=150, placeholder="Contoh: Kucing oranye gemuk...")
+        char_desc = st.text_area(
+            "Deskripsi:", 
+            height=200, 
+            placeholder="Contoh:\nSeorang astronot muda, wanita, rambut pendek pink, memakai baju luar angkasa putih kotor, wajah penuh debu."
+        )
     with c2:
         st.info("Cerita")
         mode = st.radio("Mode:", ["Judul Cerita", "Sinopsis", "Cerita Jadi"], horizontal=True)
-        placeholder = "Judul..." if mode == "Judul Cerita" else "Isi cerita..."
-        story = st.text_area("Konten:", height=150, placeholder=placeholder)
+        placeholder_text = ""
+        if mode == "Judul Cerita": placeholder_text = "Contoh Judul:\n- Misteri Hilangnya Kucing Firaun"
+        elif mode == "Sinopsis": placeholder_text = "Contoh Sinopsis:\nDi tahun 2050, hujan tidak pernah berhenti turun..."
+        else: placeholder_text = "Paste seluruh naskah ceritamu di sini..."
+        story = st.text_area("Konten:", height=200, placeholder=placeholder_text)
     
     if st.button("📝 Buat Skenario", type="primary"):
         if story and char_desc:
@@ -213,24 +209,29 @@ else:
 
     st.divider()
     
+    # === BAGIAN GENERATE VIDEO ===
     if st.button("🚀 RENDER VIDEO", type="primary", use_container_width=True):
         final_assets = []
         last_valid_img = None
         progress_bar = st.progress(0)
         
+        # Proses pengumpulan aset
         for idx, scene in enumerate(st.session_state['generated_scenes']):
             audio_p = generate_audio_sync(scene['narration'], voice_gender)
             img_p = None
             
+            # Cek upload manual
             if st.session_state.get(f"up_{idx}"):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
                     f.write(st.session_state[f"up_{idx}"].getbuffer())
                     img_p = f.name
+            # Cek AI generated
             elif idx in st.session_state['ai_images_data']:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
                     f.write(st.session_state['ai_images_data'][idx])
                     img_p = f.name
             
+            # Logika Fallback (pakai gambar sebelumnya jika kosong)
             if img_p: last_valid_img = img_p
             elif last_valid_img: img_p = last_valid_img
             
@@ -238,10 +239,28 @@ else:
                 final_assets.append({"image": img_p, "audio": audio_p})
             progress_bar.progress((idx+1)/len(st.session_state['generated_scenes']))
             
+        # Proses Render Video
         if final_assets:
             result_path = create_final_video(final_assets)
             if result_path:
+                st.session_state['final_video_path'] = result_path # SIMPAN KE MEMORI
                 st.balloons()
-                st.video(result_path)
-                with open(result_path, "rb") as f:
-                    st.download_button("⬇️ Download MP4", f, "video.mp4")
+            else:
+                st.error("Gagal render.")
+    
+    # === BAGIAN DOWNLOAD (DILUAR TOMBOL RENDER) ===
+    # Ini kuncinya: Tombol download dicek dari session_state, bukan di dalam tombol render
+    if st.session_state['final_video_path'] and os.path.exists(st.session_state['final_video_path']):
+        st.success("✅ Video Siap Didownload!")
+        
+        # Tampilkan Video
+        st.video(st.session_state['final_video_path'])
+        
+        # Tombol Download
+        with open(st.session_state['final_video_path'], "rb") as f:
+            st.download_button(
+                label="⬇️ Download Video MP4",
+                data=f,
+                file_name="ai_story_video.mp4",
+                mime="video/mp4"
+            )
