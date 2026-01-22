@@ -26,7 +26,7 @@ except KeyError:
     st.stop()
 
 # --- KONFIGURASI MODEL ---
-MODEL_NAME = 'gemini-1.5-flash'
+MODEL_NAME = 'gemini-flash-latest'
 SAFETY_SETTINGS = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -283,3 +283,4 @@ else:
                 st.error("Gagal render.")
         else:
             st.error("Gagal! Mohon setidaknya sediakan satu gambar pada Scene 1 agar bisa digunakan untuk scene berikutnya.")
+
