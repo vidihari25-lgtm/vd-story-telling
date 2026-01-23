@@ -28,7 +28,7 @@ from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, Com
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="AI Director Pro (4 Karakter)", 
+    page_title="AI Director Pro (ElevenLabs Fix)", 
     page_icon="🎬", 
     layout="wide",
     initial_sidebar_state="expanded"
@@ -163,7 +163,7 @@ def create_subtitle_layer(text, width, height):
         print(f"Sub Error: {e}")
         return None
 
-# --- AI LOGIC (4 CHARACTERS + DUAL LANG) ---
+# --- AI LOGIC (DUAL LANG) ---
 def extract_json(text):
     try:
         text = re.sub(r'```json\s*', '', text)
@@ -239,16 +239,27 @@ def generate_audio_openai(text, voice_name, api_key):
     except: return None
 
 def generate_audio_elevenlabs(text, voice_id, api_key):
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+    # MENERAPKAN PENGATURAN DARI KODE ANDA:
+    # URL dengan query param untuk kualitas audio tinggi (mp3_44100_128)
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}?output_format=mp3_44100_128"
+    
     headers = {"xi-api-key": api_key, "Content-Type": "application/json"}
-    data = {"text": text, "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": 0.5}}
+    
+    # Body payload
+    data = {
+        "text": text,
+        "model_id": "eleven_multilingual_v2",
+        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
+    }
     try:
         r = requests.post(url, json=data, headers=headers)
         if r.status_code == 200:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
                 f.write(r.content)
                 return f.name
-        return None
+        else:
+            print(f"ElevenLabs Error: {r.text}")
+            return None
     except: return None
 
 def audio_manager(text, provider, selected_voice, narr_lang_code):
@@ -269,9 +280,17 @@ def audio_manager(text, provider, selected_voice, narr_lang_code):
         if not OPENAI_API_KEY: return None
         v_map = {"Cowok (Echo)": "echo", "Cowok (Onyx)": "onyx", "Cewek (Nova)": "nova", "Cewek (Shimmer)": "shimmer"}
         return generate_audio_openai(text, v_map.get(selected_voice, "alloy"), OPENAI_API_KEY)
+    
     elif "ElevenLabs" in provider:
         if not ELEVENLABS_API_KEY: return None
-        vid = "pNInz6obpgDQGcFmaJgB" if "Adam" in selected_voice else "21m00Tcm4TlvDq8ikWAM"
+        # MAPPING VOICE ID (TERMASUK ROBB)
+        voice_map = {
+            "Cowok (Adam)": "pNInz6obpgDQGcFmaJgB",
+            "Cowok (Robb)": "JBFqnCBsd6RMkjVDRZzb", # <-- ID ROBB DARI KODE ANDA
+            "Cewek (Rachel)": "21m00Tcm4TlvDq8ikWAM"
+        }
+        # Default ke Adam jika tidak ketemu
+        vid = voice_map.get(selected_voice, "pNInz6obpgDQGcFmaJgB")
         return generate_audio_elevenlabs(text, vid, ELEVENLABS_API_KEY)
 
 # --- VIDEO ENGINE ---
@@ -364,7 +383,8 @@ with st.sidebar:
             voice_option = st.selectbox("Model:", ["Cowok (Echo)", "Cowok (Onyx)", "Cewek (Nova)", "Cewek (Shimmer)"])
         elif "ElevenLabs" in tts_provider:
             if not ELEVENLABS_API_KEY: st.error("❌ Need API Key")
-            voice_option = st.selectbox("Model:", ["Cowok (Adam)", "Cewek (Rachel)"])
+            # --- ROBB SUDAH DITAMBAHKAN ---
+            voice_option = st.selectbox("Model:", ["Cowok (Robb)", "Cowok (Adam)", "Cewek (Rachel)"])
 
     num_scenes = st.slider("Jumlah Scene:", 1, 30, 5)
     
@@ -407,7 +427,6 @@ if not st.session_state['generated_scenes']:
         if story:
             with st.status("🤖 AI Bekerja...", expanded=True) as status:
                 st.write("Menulis naskah...")
-                # Update: Logic 4 Tokoh
                 chars = f"1: {char1}. 2: {char2}. 3: {char3}. 4: {char4}."
                 
                 res = generate_scenes_logic(GEMINI_API_KEY, story, mode, chars, num_scenes, narr_lang, sub_lang)
