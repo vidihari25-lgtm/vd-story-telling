@@ -28,7 +28,7 @@ from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, Com
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="AI Director Pro (Dual Lang)", 
+    page_title="AI Director Pro (4 Karakter)", 
     page_icon="🎬", 
     layout="wide",
     initial_sidebar_state="expanded"
@@ -105,7 +105,6 @@ def create_subtitle_layer(text, width, height):
         # 2. LOGIKA AUTO-FIT (90% LEBAR)
         target_width = width * 0.90
         
-        # Estimasi ukuran font
         estimated_font_size = int(target_width / (len(text) * 0.5))
         min_font_size = int(height * 0.03)
         max_font_size = int(height * 0.07)
@@ -134,7 +133,6 @@ def create_subtitle_layer(text, width, height):
         line_spacing = current_font_size * 1.3
         total_text_height = len(lines) * line_spacing
         
-        # Margin bawah 8%
         current_y = height - (height * 0.08) - total_text_height
         
         for line in lines:
@@ -146,7 +144,6 @@ def create_subtitle_layer(text, width, height):
             
             x_pos = (width - line_w) / 2
             
-            # Box Background (Semi Transparan)
             padding_x = 10 
             padding_y = 4 
             box_top = current_y - padding_y
@@ -157,7 +154,6 @@ def create_subtitle_layer(text, width, height):
                 fill=(0, 0, 0, 85) # Hitam Transparan
             )
             
-            # Teks Kuning
             draw.text((x_pos, current_y), line, font=font, fill="#FFD700")
             current_y += line_spacing
             
@@ -167,7 +163,7 @@ def create_subtitle_layer(text, width, height):
         print(f"Sub Error: {e}")
         return None
 
-# --- AI LOGIC (DUAL LANGUAGE) ---
+# --- AI LOGIC (4 CHARACTERS + DUAL LANG) ---
 def extract_json(text):
     try:
         text = re.sub(r'```json\s*', '', text)
@@ -180,27 +176,28 @@ def extract_json(text):
 def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_scenes, narr_lang, sub_lang):
     genai.configure(api_key=api_key)
     
-    # INSTRUKSI BAHASA YANG TERPISAH
-    narr_instruction = f"Narration (voiceover) MUST be in {narr_lang}."
-    sub_instruction = f"Subtitle text MUST be in {sub_lang}."
-    
     prompt = f"""
     Role: Professional Movie Director.
     Story Context: '{input_text}' (Mode: {input_mode})
-    Characters: {char_desc}
+    
+    CAST / CHARACTERS:
+    {char_desc}
+    
+    STRICT LANGUAGE RULES:
+    1. 'narration' field MUST be in {narr_lang}.
+    2. 'subtitle' field MUST be in {sub_lang}.
+    3. Do NOT mix the languages.
     
     Requirement: 
     1. Create EXACTLY {target_scenes} scenes.
-    2. {narr_instruction}
-    3. {sub_instruction}
-    4. Keep narration concise (max 2 short sentences per scene).
+    2. Keep narration concise (max 2 short sentences per scene).
     
     OUTPUT JSON ARRAY ONLY:
     [
         {{
             "scene_number": 1,
-            "narration": "Text for audio voiceover...",
-            "subtitle": "Text to show on screen...",
+            "narration": "Write narration here in {narr_lang}...",
+            "subtitle": "Write subtitle here in {sub_lang}...",
             "image_prompt": "Cinematic shot of [Character], [Action], 8k, bright lighting, wide angle"
         }}
     ]
@@ -254,16 +251,12 @@ def generate_audio_elevenlabs(text, voice_id, api_key):
         return None
     except: return None
 
-def audio_manager(text, provider, selected_voice):
+def audio_manager(text, provider, selected_voice, narr_lang_code):
     if "Gratis" in provider:
-        # Deteksi bahasa kasar untuk Edge-TTS
-        # Jika teks narasi Indonesia, pakai Ardi/Gadis. Jika Inggris, pakai Ana/Guy.
-        # Tapi untuk simpel, kita pakai default ID/EN berdasarkan pilihan user di sidebar nanti.
-        # Disini kita defaultkan ID dulu, tapi nanti bisa dikembangkan.
-        
-        # Kita cek text-nya apakah mengandung kata english umum (simple check)
-        # Atau kita paksa saja suara ID karena user minta cerita bahasa Indonesia
-        voice_id = "id-ID-ArdiNeural" if "Ardi" in selected_voice else "id-ID-GadisNeural"
+        if narr_lang_code == "English":
+            voice_id = "en-US-ChristopherNeural" if "Cowok" in selected_voice else "en-US-AriaNeural"
+        else:
+            voice_id = "id-ID-ArdiNeural" if "Cowok" in selected_voice else "id-ID-GadisNeural"
         
         try:
             temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
@@ -271,6 +264,7 @@ def audio_manager(text, provider, selected_voice):
             asyncio.run(edge_tts_generate(text, voice_id, temp.name))
             return temp.name
         except: return None
+        
     elif "OpenAI" in provider:
         if not OPENAI_API_KEY: return None
         v_map = {"Cowok (Echo)": "echo", "Cowok (Onyx)": "onyx", "Cewek (Nova)": "nova", "Cewek (Shimmer)": "shimmer"}
@@ -292,7 +286,6 @@ def create_final_video(assets, use_subtitle=False):
         try:
             log_box.info(f"⚙️ Mengolah Scene {i+1}...")
             
-            # 1. LAYER 1: Background Zoom
             original_img = PIL.Image.open(asset['image'])
             if original_img.mode != 'RGB':
                 original_img = original_img.convert('RGB')
@@ -311,8 +304,6 @@ def create_final_video(assets, use_subtitle=False):
             
             final_clip_layers = [bg_clip]
             
-            # 2. LAYER 2: Subtitle (Static & Fixed Box)
-            # Menggunakan field 'subtitle' dari asset, bukan 'narration'
             subtitle_text = asset.get('subtitle', '')
             
             if use_subtitle and subtitle_text:
@@ -352,7 +343,6 @@ def create_final_video(assets, use_subtitle=False):
 with st.sidebar:
     st.markdown("### 🎛️ Control Panel")
     
-    # --- PENGATURAN BAHASA GANDA ---
     st.markdown("**🌐 Pengaturan Bahasa:**")
     col_lang1, col_lang2 = st.columns(2)
     with col_lang1:
@@ -363,8 +353,12 @@ with st.sidebar:
     with st.expander("🔊 Audio Provider", expanded=True):
         tts_provider = st.radio("Provider:", ["Edge-TTS (Gratis)", "OpenAI (Pro)", "ElevenLabs (Ultra)"])
         voice_option = ""
+        
         if "Gratis" in tts_provider:
-            voice_option = st.selectbox("Model:", ["Cowok (Ardi)", "Cewek (Gadis)"])
+            if narr_lang == "English":
+                voice_option = st.selectbox("Model (Inggris):", ["Cowok (Christopher)", "Cewek (Aria)"])
+            else:
+                voice_option = st.selectbox("Model (Indo):", ["Cowok (Ardi)", "Cewek (Gadis)"])
         elif "OpenAI" in tts_provider:
             if not OPENAI_API_KEY: st.error("❌ Need API Key")
             voice_option = st.selectbox("Model:", ["Cowok (Echo)", "Cowok (Onyx)", "Cewek (Nova)", "Cewek (Shimmer)"])
@@ -390,14 +384,20 @@ st.markdown('<h1 class="title-text">AI Director Pro</h1>', unsafe_allow_html=Tru
 
 # INPUT
 if not st.session_state['generated_scenes']:
-    tab1, tab2 = st.tabs(["🎭 Karakter", "📜 Cerita"])
+    tab1, tab2 = st.tabs(["🎭 Karakter (4 Tokoh)", "📜 Cerita"])
     with tab1:
+        st.info("Masukkan detail 4 tokoh utama:")
         c1, c2 = st.columns(2)
         with c1:
-            char1 = st.text_input("Tokoh 1:", placeholder="Nama & Ciri")
+            char1 = st.text_input("Tokoh 1 (Utama):", placeholder="Nama & Ciri")
             char2 = st.text_input("Tokoh 2:", placeholder="Nama & Ciri")
         with c2:
-            char_img = st.file_uploader("Upload Foto:", type=['jpg', 'png'])
+            char3 = st.text_input("Tokoh 3:", placeholder="Nama & Ciri")
+            char4 = st.text_input("Tokoh 4:", placeholder="Nama & Ciri")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        char_img = st.file_uploader("Upload Foto Referensi (Opsional):", type=['jpg', 'png'])
+
     with tab2:
         mode = st.radio("Mode:", ["Judul Cerita", "Sinopsis", "Cerita Jadi"], horizontal=True)
         story = st.text_area("Konten:", height=200, placeholder="...")
@@ -407,9 +407,9 @@ if not st.session_state['generated_scenes']:
         if story:
             with st.status("🤖 AI Bekerja...", expanded=True) as status:
                 st.write("Menulis naskah...")
-                chars = f"Main: {char1}. Support: {char2}."
+                # Update: Logic 4 Tokoh
+                chars = f"1: {char1}. 2: {char2}. 3: {char3}. 4: {char4}."
                 
-                # Memanggil fungsi dengan 2 bahasa berbeda
                 res = generate_scenes_logic(GEMINI_API_KEY, story, mode, chars, num_scenes, narr_lang, sub_lang)
                 
                 if isinstance(res, list):
@@ -431,7 +431,6 @@ else:
             cols = st.columns([0.2, 2, 1.5])
             with cols[0]: st.markdown(f"### {i+1}")
             with cols[1]:
-                # Tampilkan Narasi dan Subtitle terpisah agar user bisa cek
                 st.markdown(f"**🗣️ Suara ({narr_lang}):** {scene.get('narration', '')}")
                 st.markdown(f"**📝 Teks ({sub_lang}):** {scene.get('subtitle', '')}")
                 with st.expander("Prompt"): st.code(scene['image_prompt'])
@@ -456,7 +455,7 @@ else:
         bar = st.progress(0)
         
         for idx, sc in enumerate(st.session_state['generated_scenes']):
-            aud = audio_manager(sc['narration'], tts_provider, voice_option)
+            aud = audio_manager(sc['narration'], tts_provider, voice_option, narr_lang)
             if not aud: st.error(f"Audio Error Scene {idx+1}"); st.stop()
             
             img = None
@@ -473,12 +472,11 @@ else:
             elif last_img: img = last_img
             
             if img and aud: 
-                # Masukkan SUBTITLE terpisah ke dalam aset
                 assets.append({
                     'image': img, 
                     'audio': aud, 
                     'narration': sc['narration'],
-                    'subtitle': sc.get('subtitle', sc['narration']) # Fallback ke narasi jika subtitle kosong
+                    'subtitle': sc.get('subtitle', sc['narration'])
                 })
             bar.progress((idx+1)/len(st.session_state['generated_scenes']))
         
