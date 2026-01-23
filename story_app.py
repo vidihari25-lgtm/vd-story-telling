@@ -29,7 +29,7 @@ from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, Com
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="AI Director Pro (+Music)", 
+    page_title="AI Director Pro (+Style & Save)", 
     page_icon="🎬", 
     layout="wide",
     initial_sidebar_state="expanded"
@@ -73,6 +73,7 @@ OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", None)
 if 'generated_scenes' not in st.session_state: st.session_state['generated_scenes'] = []
 if 'ai_images_data' not in st.session_state: st.session_state['ai_images_data'] = {}
 if 'final_video_path' not in st.session_state: st.session_state['final_video_path'] = None
+if 'project_title' not in st.session_state: st.session_state['project_title'] = "Untitled_Project"
 
 # --- AUTO DOWNLOAD ---
 def trigger_auto_download(file_path):
@@ -81,7 +82,7 @@ def trigger_auto_download(file_path):
             data = f.read()
         b64 = base64.b64encode(data).decode()
         md = f"""
-            <a href="data:video/mp4;base64,{b64}" download="ai_story_video.mp4" id="download_link" style="display:none;">Download</a>
+            <a href="data:video/mp4;base64,{b64}" download="{os.path.basename(file_path)}" id="download_link" style="display:none;">Download</a>
             <script>document.getElementById('download_link').click();</script>
         """
         components.html(md, height=0)
@@ -192,8 +193,22 @@ def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_sce
         return result
     except Exception as e: return f"API ERROR: {str(e)}"
 
-def generate_image_pollinations(prompt):
-    clean = requests.utils.quote(f"{prompt}, bright cinematic lighting, masterpiece")
+def generate_image_pollinations(prompt, style_name):
+    # UPDATE: MENAMBAHKAN ART STYLE KE PROMPT
+    style_prompts = {
+        "Cinematic Realism": "cinematic lighting, photorealistic, 8k, movie scene, masterpiece",
+        "3D Disney Animation": "3d style, disney pixar style, cute, vibrant colors, 3d render, cgsociety",
+        "Anime / Manga": "anime style, studio ghibli style, detailed line art, vibrant, 2d",
+        "Oil Painting": "oil painting style, textured, classical art, detailed strokes",
+        "Cyberpunk": "cyberpunk style, neon lights, futuristic, high tech, dark atmosphere",
+        "Watercolor": "watercolor style, soft edges, artistic, painting",
+        "Vintage Film": "vintage film style, grain, retro, 1980s movie style"
+    }
+    
+    selected_style = style_prompts.get(style_name, "")
+    full_prompt = f"{prompt}, {selected_style}"
+    
+    clean = requests.utils.quote(full_prompt)
     seed = random.randint(1, 99999)
     url = f"https://image.pollinations.ai/prompt/{clean}?width=1280&height=720&seed={seed}&nologo=true&model=flux"
     try:
@@ -258,13 +273,12 @@ def audio_manager(text, provider, selected_voice, narr_lang_code):
         vid = voice_map.get(selected_voice, "pNInz6obpgDQGcFmaJgB")
         return generate_audio_elevenlabs(text, vid, ELEVENLABS_API_KEY)
 
-# --- VIDEO ENGINE (WITH BGM SUPPORT) ---
+# --- VIDEO ENGINE (SAVE & BGM) ---
 def create_final_video(assets, use_subtitle=False, bgm_path=None, bgm_vol=0.1):
     clips = []
     log_box = st.empty()
     W, H = 1280, 720 
     
-    # 1. BUAT KLIP VISUAL (GAMBAR + NARASI)
     for i, asset in enumerate(assets):
         try:
             log_box.info(f"⚙️ Mengolah Scene {i+1}...")
@@ -308,33 +322,40 @@ def create_final_video(assets, use_subtitle=False, bgm_path=None, bgm_vol=0.1):
         log_box.info("🎞️ Menggabungkan Video...")
         final_video = concatenate_videoclips(clips, method="compose")
         
-        # 2. PROSES BACKSOUND (LAGU LATAR)
         if bgm_path:
             log_box.info("🎵 Menambahkan Musik Latar...")
             try:
                 music = AudioFileClip(bgm_path)
-                
-                # Loop musik jika video lebih panjang dari musik
                 if music.duration < final_video.duration:
                     music = afx.audio_loop(music, duration=final_video.duration)
                 else:
-                    # Potong musik jika kepanjangan
                     music = music.subclip(0, final_video.duration)
-                
-                # Atur volume backsound
                 music = music.volumex(bgm_vol)
-                
-                # Gabungkan Suara Narasi + Musik
                 final_audio = CompositeAudioClip([final_video.audio, music])
                 final_video = final_video.set_audio(final_audio)
             except Exception as e:
                 st.warning(f"⚠️ Gagal menambahkan musik: {e}")
 
-        # 3. RENDER FINAL
-        output_path = tempfile.mktemp(suffix=".mp4")
-        final_video.write_videofile(output_path, fps=24, codec='libx264', audio_codec='aac', preset='ultrafast', threads=1, logger=None)
-        log_box.success("✅ Selesai!")
-        return output_path
+        # --- LOGIKA PENYIMPANAN OTOMATIS SESUAI JUDUL ---
+        output_folder = "Hasil_Video"
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+            
+        # Bersihkan judul proyek agar aman jadi nama file
+        safe_title = re.sub(r'[\\/*?:"<>|]', "", st.session_state['project_title'])
+        safe_title = safe_title.replace(" ", "_")[:50] # Ambil 50 karakter pertama
+        timestamp = int(time.time())
+        
+        # Nama file final: Judul_Timestamp.mp4
+        final_filename = f"{safe_title}_{timestamp}.mp4"
+        final_path = os.path.join(output_folder, final_filename)
+        
+        log_box.info(f"💾 Menyimpan ke: {final_path} ...")
+        final_video.write_videofile(final_path, fps=24, codec='libx264', audio_codec='aac', preset='ultrafast', threads=1, logger=None)
+        
+        log_box.success(f"✅ Selesai! Tersimpan di: `{final_path}`")
+        return final_path
+        
     except Exception as e:
         st.error(f"❌ Render Error: {str(e)}")
         return None
@@ -343,6 +364,13 @@ def create_final_video(assets, use_subtitle=False, bgm_path=None, bgm_vol=0.1):
 with st.sidebar:
     st.markdown("### 🎛️ Control Panel")
     
+    # 1. ART STYLE SELECTION (FITUR BARU)
+    art_style = st.selectbox(
+        "🎨 Gaya Visual (Art Style):", 
+        ["Cinematic Realism", "3D Disney Animation", "Anime / Manga", "Cyberpunk", "Oil Painting", "Watercolor", "Vintage Film"]
+    )
+    
+    st.markdown("---")
     st.markdown("**🌐 Bahasa:**")
     c1, c2 = st.columns(2)
     with c1: narr_lang = st.selectbox("🗣️ Suara:", ["Indonesia", "English"])
@@ -361,11 +389,10 @@ with st.sidebar:
             if not ELEVENLABS_API_KEY: st.error("❌ API Key Missing")
             voice_option = st.selectbox("Model:", ["Cowok (Robb)", "Cowok (Adam)", "Cewek (Rachel)"])
 
-    # --- FITUR BARU: BACKSOUND ---
     st.markdown("---")
     st.markdown("**🎵 Musik Latar (Backsound):**")
     bgm_file = st.file_uploader("Upload MP3/WAV:", type=['mp3', 'wav'], label_visibility="collapsed")
-    bgm_vol = st.slider("Volume Musik:", 0.0, 0.5, 0.1, step=0.05, help="0.1 = 10% (Disarankan agar tidak berisik)")
+    bgm_vol = st.slider("Volume Musik:", 0.0, 0.5, 0.1, step=0.05)
 
     st.markdown("---")
     num_scenes = st.slider("Jumlah Scene:", 1, 30, 5)
@@ -377,7 +404,18 @@ with st.sidebar:
         st.session_state['generated_scenes'] = []
         st.session_state['ai_images_data'] = {}
         st.session_state['final_video_path'] = None
+        st.session_state['project_title'] = "Untitled_Project"
         st.rerun()
+        
+    st.markdown(
+        """
+        <div style="text-align: center; font-size: 12px; color: #6b7280;">
+            © 2026 <b>VDMotionStudio</b><br>
+            <i>Created with AI Director Pro</i>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
 
 st.markdown('<h1 class="title-text">AI Director Pro</h1>', unsafe_allow_html=True)
 
@@ -400,6 +438,11 @@ if not st.session_state['generated_scenes']:
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("✨ Buat Skenario", type="primary", use_container_width=True):
         if story:
+            # SIMPAN JUDUL PROYEK UNTUK NAMA FILE NANTI
+            # Ambil 5 kata pertama dari cerita sebagai judul
+            title_candidate = " ".join(story.split()[:5]) if story else "Untitled"
+            st.session_state['project_title'] = title_candidate
+            
             with st.status("🤖 AI Bekerja...", expanded=True) as status:
                 st.write("Menulis naskah...")
                 chars = f"1: {char1}. 2: {char2}. 3: {char3}. 4: {char4}."
@@ -415,7 +458,7 @@ if not st.session_state['generated_scenes']:
         else: st.warning("Isi cerita dulu.")
 
 else:
-    st.markdown(f"### 🎬 Editor ({len(st.session_state['generated_scenes'])})")
+    st.markdown(f"### 🎬 Editor ({len(st.session_state['generated_scenes'])}) | Style: {art_style}")
     for i, scene in enumerate(st.session_state['generated_scenes']):
         with st.container():
             cols = st.columns([0.2, 2, 1.5])
@@ -425,9 +468,10 @@ else:
                 st.markdown(f"**📝 ({sub_lang}):** {scene.get('subtitle', '')}")
                 with st.expander("Prompt"): st.code(scene['image_prompt'])
             with cols[2]:
-                if st.button(f"🎲 Generate", key=f"gen_{i}", use_container_width=True):
+                # UPDATE: Pass 'art_style' ke fungsi generate gambar
+                if st.button(f"🎲 Generate ({art_style})", key=f"gen_{i}", use_container_width=True):
                     with st.spinner("..."):
-                        data = generate_image_pollinations(scene['image_prompt'])
+                        data = generate_image_pollinations(scene['image_prompt'], art_style)
                         if data: st.session_state['ai_images_data'][i] = data
                 uploaded = st.file_uploader("Upload", key=f"up_{i}", label_visibility="collapsed")
                 if uploaded: st.image(uploaded, width=250)
@@ -439,7 +483,6 @@ else:
         if "Pro" in tts_provider and not OPENAI_API_KEY: st.error("Need OpenAI Key"); st.stop()
         if "Ultra" in tts_provider and not ELEVENLABS_API_KEY: st.error("Need ElevenLabs Key"); st.stop()
 
-        # PROSES BACKSOUND DI AWAL
         bgm_path = None
         if bgm_file:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
@@ -469,7 +512,6 @@ else:
             bar.progress((idx+1)/len(st.session_state['generated_scenes']))
         
         if assets:
-            # PASSING PARAMETER BGM KE VIDEO ENGINE
             vid_path = create_final_video(assets, use_subtitle=enable_subtitle, bgm_path=bgm_path, bgm_vol=bgm_vol)
             
             if vid_path:
@@ -482,20 +524,6 @@ else:
     if st.session_state['final_video_path'] and os.path.exists(st.session_state['final_video_path']):
         with st.container():
             st.success("✅ Video Selesai!")
-            # ... (Letakkan di bagian paling bawah file app.py) ...
-
-with st.sidebar:
-    st.markdown("---")
-    st.markdown(
-        """
-        <div style="text-align: center; font-size: 12px; color: #6b7280;">
-            © 2026 <b>VDMotionStudio</b><br>
-            <i>Created with AI Director Pro</i>
-        </div>
-        """, 
-        unsafe_allow_html=True
-    )
             st.video(st.session_state['final_video_path'])
             with open(st.session_state['final_video_path'], "rb") as f:
                 st.download_button("⬇️ Download Manual", data=f, file_name="video.mp4", mime="video/mp4", type="primary", use_container_width=True)
-
