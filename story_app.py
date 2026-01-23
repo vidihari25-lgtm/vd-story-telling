@@ -156,7 +156,7 @@ def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_sce
     [{{"scene_number": 1, "narration": "Indonesian narration...", "image_prompt": "Cinematic shot of [Character Name], [action], 8k, masterpiece, photorealistic, bright lighting"}}]
     """
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-flash-latest')
         response = model.generate_content(prompt)
         return extract_json(response.text)
     except: return None
@@ -445,3 +445,4 @@ else:
                         type="primary",
                         use_container_width=True
                     )
+
