@@ -18,17 +18,17 @@ import os
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip
 
 # --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="AI Story Video Pro (Multi-Char V2)", page_icon="🎬", layout="wide")
+st.set_page_config(page_title="AI Story Video (Dual Voice)", page_icon="🎬", layout="wide")
 
 # --- AMBIL API KEY DARI SECRETS ---
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-except FileNotFoundError:
-    st.error("⚠️ File `.streamlit/secrets.toml` belum dibuat!")
+except:
+    st.error("⚠️ Key `GEMINI_API_KEY` hilang di secrets.toml!")
     st.stop()
-except KeyError:
-    st.error("⚠️ Key `GEMINI_API_KEY` tidak ditemukan di secrets!")
-    st.stop()
+
+# Ambil ElevenLabs Key (Bisa None jika user cuma mau pakai gratisan)
+ELEVENLABS_API_KEY = st.secrets.get("ELEVENLABS_API_KEY", None)
 
 # --- SESSION STATE ---
 if 'generated_scenes' not in st.session_state: st.session_state['generated_scenes'] = []
@@ -45,13 +45,13 @@ def extract_json(text):
         return json.loads(text)
     except: return None
 
-# --- FUNGSI BARU: ANALISIS GAMBAR KARAKTER ---
+# --- FUNGSI ANALISIS GAMBAR ---
 def analyze_uploaded_char(api_key, image_file):
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-flash-latest')
         img = PIL.Image.open(image_file)
-        prompt = "Describe the visual appearance of this character in detail (face, hair, clothes, style) in one paragraph. Start with 'A character looking like...'"
+        prompt = "Describe the visual appearance of this character in detail (face, hair, clothes, style) in one paragraph."
         response = model.generate_content([prompt, img])
         return response.text.strip()
     except Exception as e:
@@ -67,14 +67,11 @@ def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_sce
 
     prompt = f"""
     Act as Video Director. Mode: {input_mode}. 
-    
-    CHARACTERS IN THIS STORY:
-    {char_desc}
-    
+    CHARACTERS: {char_desc}
     Task: {mode_instruction}.
     Create exactly {target_scenes} scenes.
     OUTPUT JSON ARRAY ONLY:
-    [{{"scene_number": 1, "narration": "Indonesian narration...", "image_prompt": "Cinematic shot of [Insert specific Character Name from list], [action], 8k"}}]
+    [{{"scene_number": 1, "narration": "Indonesian narration...", "image_prompt": "Cinematic shot of [Character Name], [action], 8k"}}]
     """
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -92,19 +89,61 @@ def generate_image_pollinations(prompt):
         return resp.content if resp.status_code == 200 else None
     except: return None
 
-# --- FUNGSI 3: AUDIO ---
+# --- FUNGSI 3: AUDIO MANAGER (DUAL MODE) ---
+
+# 3a. Fungsi Helper Edge-TTS
 async def edge_tts_generate(text, voice, output_file):
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(output_file)
 
-def generate_audio_sync(text, gender):
-    voice = "id-ID-ArdiNeural" if gender == "Cowok (Ardi)" else "id-ID-GadisNeural"
+# 3b. Fungsi Helper ElevenLabs
+def generate_audio_elevenlabs(text, voice_id, api_key):
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+    headers = {
+        "xi-api-key": api_key,
+        "Content-Type": "application/json"
+    }
+    # Menggunakan model Multilingual v2 agar bagus di Bahasa Indonesia
+    data = {
+        "text": text,
+        "model_id": "eleven_multilingual_v2",
+        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
+    }
     try:
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-        temp_file.close()
-        asyncio.run(edge_tts_generate(text, voice, temp_file.name))
-        return temp_file.name
+        response = requests.post(url, json=data, headers=headers)
+        if response.status_code == 200:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
+                f.write(response.content)
+                return f.name
+        else:
+            print(f"ElevenLabs Error: {response.text}")
+            return None
     except: return None
+
+# 3c. FUNGSI UTAMA PENGATUR SUARA
+def audio_manager(text, provider, selected_voice):
+    # OPSI 1: EDGE TTS (GRATIS)
+    if provider == "Edge-TTS (Gratis)":
+        # Mapping nama ke ID suara Microsoft
+        voice_id = "id-ID-ArdiNeural" if selected_voice == "Cowok (Ardi)" else "id-ID-GadisNeural"
+        try:
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+            temp_file.close()
+            asyncio.run(edge_tts_generate(text, voice_id, temp_file.name))
+            return temp_file.name
+        except: return None
+    
+    # OPSI 2: ELEVENLABS (PRO)
+    elif provider == "ElevenLabs (Pro)":
+        if not ELEVENLABS_API_KEY:
+            return None # Key tidak ada
+        
+        # Mapping nama ke ID suara ElevenLabs (Public ID)
+        # Adam = pNInz6obpgDQGcFmaJgB
+        # Rachel = 21m00Tcm4TlvDq8ikWAM
+        voice_id = "pNInz6obpgDQGcFmaJgB" if selected_voice == "Cowok (Adam)" else "21m00Tcm4TlvDq8ikWAM"
+        
+        return generate_audio_elevenlabs(text, voice_id, ELEVENLABS_API_KEY)
 
 # --- FUNGSI 4: VIDEO ENGINE ---
 def create_final_video(assets):
@@ -157,7 +196,20 @@ def create_final_video(assets):
 # ================= UI APLIKASI =================
 
 st.sidebar.title("⚙️ Pengaturan")
-voice_gender = st.sidebar.selectbox("Suara", ["Cowok (Ardi)", "Cewek (Gadis)"])
+
+# --- PILIHAN DUAL PROVIDER ---
+st.sidebar.subheader("🔊 Pengaturan Suara")
+tts_provider = st.sidebar.radio("Pilih Provider:", ["Edge-TTS (Gratis)", "ElevenLabs (Pro)"])
+
+voice_option = ""
+if tts_provider == "Edge-TTS (Gratis)":
+    voice_option = st.sidebar.selectbox("Suara (Gratis):", ["Cowok (Ardi)", "Cewek (Gadis)"])
+else:
+    if not ELEVENLABS_API_KEY:
+        st.sidebar.error("⚠️ Masukkan ELEVENLABS_API_KEY di secrets.toml dulu!")
+    voice_option = st.sidebar.selectbox("Suara (Realistis):", ["Cowok (Adam)", "Cewek (Rachel)"])
+
+st.sidebar.divider()
 num_scenes = st.sidebar.slider("Jumlah Scene", 1, 100, 5)
 
 if st.sidebar.button("🗑️ Reset Baru"):
@@ -166,45 +218,34 @@ if st.sidebar.button("🗑️ Reset Baru"):
     st.session_state['final_video_path'] = None
     st.rerun()
 
-st.title("🎬 AI Video Maker (Multi-Char V2)")
+st.title("🎬 AI Video Maker (Dual Voice Mode)")
 st.markdown("---")
 
-# INPUT SECTION (Hanya muncul jika belum ada scene)
+# INPUT SECTION
 if not st.session_state['generated_scenes']:
     c1, c2 = st.columns([1, 2])
     
-    # === KOLOM KARAKTER ===
     with c1:
         st.info("👥 **Input Karakter**")
-        st.caption("Masukkan detail karakter di bawah:")
-        
-        # Karakter Teks 1-3
         char1 = st.text_input("Tokoh 1:", placeholder="Nama & Ciri fisik")
         char2 = st.text_input("Tokoh 2:", placeholder="Nama & Ciri fisik")
         char3 = st.text_input("Tokoh 3:", placeholder="Nama & Ciri fisik")
-        
         st.divider()
-        
-        # Karakter Gambar
         st.write("**Tokoh 4 (Upload Gambar):**")
         char_img_upload = st.file_uploader("Upload foto:", type=['jpg', 'png', 'jpeg'])
-        if char_img_upload:
-            st.image(char_img_upload, caption="Preview Tokoh 4", width=150)
+        if char_img_upload: st.image(char_img_upload, caption="Preview Tokoh 4", width=150)
             
-    # === KOLOM CERITA ===
     with c2:
         st.info("📖 **Cerita**")
         mode = st.radio("Mode:", ["Judul Cerita", "Sinopsis", "Cerita Jadi"], horizontal=True)
         placeholder_text = "Tulis ceritamu di sini..."
         story = st.text_area("Konten Cerita:", height=350, placeholder=placeholder_text)
     
-    # === TOMBOL EKSEKUSI ===
     if st.button("📝 Buat Skenario", type="primary", use_container_width=True):
         if story:
             progress_text = st.empty()
             progress_text.text("🔄 Mengumpulkan data karakter...")
             
-            # GABUNGKAN DATA KARAKTER
             combined_char_desc = "Daftar Karakter Utama:\n"
             if char1: combined_char_desc += f"- Tokoh 1: {char1}\n"
             if char2: combined_char_desc += f"- Tokoh 2: {char2}\n"
@@ -215,8 +256,7 @@ if not st.session_state['generated_scenes']:
                 img_desc = analyze_uploaded_char(GEMINI_API_KEY, char_img_upload)
                 combined_char_desc += f"- Tokoh 4 (Visual Reference): {img_desc}\n"
             
-            if len(combined_char_desc) < 25: 
-                combined_char_desc = "General characters fitting the story context."
+            if len(combined_char_desc) < 25: combined_char_desc = "General characters fitting the story context."
 
             progress_text.text("🤖 Membuat Skenario dengan AI...")
             res = generate_scenes_logic(GEMINI_API_KEY, story, mode, combined_char_desc, num_scenes)
@@ -231,7 +271,10 @@ if not st.session_state['generated_scenes']:
 
 # EDITOR SECTION
 else:
-    st.info("ℹ️ Tips: Scene tanpa gambar otomatis pakai gambar sebelumnya.")
+    if tts_provider == "ElevenLabs (Pro)":
+        st.warning("⚠️ Mode ElevenLabs Aktif: Pastikan Anda memiliki kuota API yang cukup.")
+    else:
+        st.info("ℹ️ Mode Gratis Aktif.")
     
     with st.container():
         for i, scene in enumerate(st.session_state['generated_scenes']):
@@ -253,14 +296,24 @@ else:
     st.divider()
     
     if st.button("🚀 RENDER VIDEO", type="primary", use_container_width=True):
+        # Validasi Key ElevenLabs
+        if tts_provider == "ElevenLabs (Pro)" and not ELEVENLABS_API_KEY:
+            st.error("❌ Anda memilih mode ElevenLabs tapi API Key belum diisi di secrets.toml")
+            st.stop()
+
         final_assets = []
         last_valid_img = None
         progress_bar = st.progress(0)
         
         for idx, scene in enumerate(st.session_state['generated_scenes']):
-            audio_p = generate_audio_sync(scene['narration'], voice_gender)
-            img_p = None
+            # GENERATE AUDIO MENGGUNAKAN MANAGER (ROUTER)
+            audio_p = audio_manager(scene['narration'], tts_provider, voice_option)
             
+            if not audio_p and tts_provider == "ElevenLabs (Pro)":
+                st.error(f"Gagal generate suara ElevenLabs pada Scene {idx+1}. Cek kuota/Key.")
+                st.stop()
+            
+            img_p = None
             if st.session_state.get(f"up_{idx}"):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
                     f.write(st.session_state[f"up_{idx}"].getbuffer())
