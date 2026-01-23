@@ -18,7 +18,7 @@ import os
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip
 
 # --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="AI Story Video (Dual Voice)", page_icon="🎬", layout="wide")
+st.set_page_config(page_title="AI Story Video (Triple Voice)", page_icon="🎬", layout="wide")
 
 # --- AMBIL API KEY DARI SECRETS ---
 try:
@@ -27,8 +27,9 @@ except:
     st.error("⚠️ Key `GEMINI_API_KEY` hilang di secrets.toml!")
     st.stop()
 
-# Ambil ElevenLabs Key (Bisa None jika user cuma mau pakai gratisan)
+# Ambil Key Tambahan (Boleh None jika tidak dipakai)
 ELEVENLABS_API_KEY = st.secrets.get("ELEVENLABS_API_KEY", None)
+OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", None)
 
 # --- SESSION STATE ---
 if 'generated_scenes' not in st.session_state: st.session_state['generated_scenes'] = []
@@ -89,21 +90,17 @@ def generate_image_pollinations(prompt):
         return resp.content if resp.status_code == 200 else None
     except: return None
 
-# --- FUNGSI 3: AUDIO MANAGER (DUAL MODE) ---
+# --- FUNGSI 3: AUDIO MANAGER (TRIPLE MODE) ---
 
-# 3a. Fungsi Helper Edge-TTS
+# 3a. Helper: Edge-TTS
 async def edge_tts_generate(text, voice, output_file):
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(output_file)
 
-# 3b. Fungsi Helper ElevenLabs
+# 3b. Helper: ElevenLabs
 def generate_audio_elevenlabs(text, voice_id, api_key):
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
-    headers = {
-        "xi-api-key": api_key,
-        "Content-Type": "application/json"
-    }
-    # Menggunakan model Multilingual v2 agar bagus di Bahasa Indonesia
+    headers = {"xi-api-key": api_key, "Content-Type": "application/json"}
     data = {
         "text": text,
         "model_id": "eleven_multilingual_v2",
@@ -115,16 +112,33 @@ def generate_audio_elevenlabs(text, voice_id, api_key):
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
                 f.write(response.content)
                 return f.name
+        return None
+    except: return None
+
+# 3c. Helper: OpenAI TTS (BARU)
+def generate_audio_openai(text, voice_name, api_key):
+    url = "https://api.openai.com/v1/audio/speech"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    data = {
+        "model": "tts-1", # Model standar (cepat & murah)
+        "input": text,
+        "voice": voice_name.lower() # alloy, echo, fable, onyx, nova, shimmer
+    }
+    try:
+        response = requests.post(url, json=data, headers=headers)
+        if response.status_code == 200:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
+                f.write(response.content)
+                return f.name
         else:
-            print(f"ElevenLabs Error: {response.text}")
+            print(f"OpenAI Error: {response.text}")
             return None
     except: return None
 
-# 3c. FUNGSI UTAMA PENGATUR SUARA
+# 3d. ROUTER UTAMA
 def audio_manager(text, provider, selected_voice):
     # OPSI 1: EDGE TTS (GRATIS)
     if provider == "Edge-TTS (Gratis)":
-        # Mapping nama ke ID suara Microsoft
         voice_id = "id-ID-ArdiNeural" if selected_voice == "Cowok (Ardi)" else "id-ID-GadisNeural"
         try:
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
@@ -133,16 +147,24 @@ def audio_manager(text, provider, selected_voice):
             return temp_file.name
         except: return None
     
-    # OPSI 2: ELEVENLABS (PRO)
-    elif provider == "ElevenLabs (Pro)":
-        if not ELEVENLABS_API_KEY:
-            return None # Key tidak ada
-        
-        # Mapping nama ke ID suara ElevenLabs (Public ID)
-        # Adam = pNInz6obpgDQGcFmaJgB
-        # Rachel = 21m00Tcm4TlvDq8ikWAM
+    # OPSI 2: OPENAI (TERBAIK/MURAH)
+    elif provider == "OpenAI (Pro)":
+        if not OPENAI_API_KEY: return None
+        # Mapping nama ke ID suara OpenAI
+        # Cowok: Echo, Onyx | Cewek: Nova, Shimmer, Alloy
+        voice_map = {
+            "Cowok (Echo)": "echo",
+            "Cowok (Onyx)": "onyx",
+            "Cewek (Nova)": "nova",
+            "Cewek (Shimmer)": "shimmer"
+        }
+        voice_id = voice_map.get(selected_voice, "alloy")
+        return generate_audio_openai(text, voice_id, OPENAI_API_KEY)
+
+    # OPSI 3: ELEVENLABS (ULTRA)
+    elif provider == "ElevenLabs (Ultra)":
+        if not ELEVENLABS_API_KEY: return None
         voice_id = "pNInz6obpgDQGcFmaJgB" if selected_voice == "Cowok (Adam)" else "21m00Tcm4TlvDq8ikWAM"
-        
         return generate_audio_elevenlabs(text, voice_id, ELEVENLABS_API_KEY)
 
 # --- FUNGSI 4: VIDEO ENGINE ---
@@ -197,17 +219,23 @@ def create_final_video(assets):
 
 st.sidebar.title("⚙️ Pengaturan")
 
-# --- PILIHAN DUAL PROVIDER ---
+# --- PILIHAN TRIPLE PROVIDER ---
 st.sidebar.subheader("🔊 Pengaturan Suara")
-tts_provider = st.sidebar.radio("Pilih Provider:", ["Edge-TTS (Gratis)", "ElevenLabs (Pro)"])
+tts_provider = st.sidebar.radio("Pilih Provider:", ["Edge-TTS (Gratis)", "OpenAI (Pro)", "ElevenLabs (Ultra)"])
 
 voice_option = ""
 if tts_provider == "Edge-TTS (Gratis)":
-    voice_option = st.sidebar.selectbox("Suara (Gratis):", ["Cowok (Ardi)", "Cewek (Gadis)"])
-else:
+    voice_option = st.sidebar.selectbox("Suara:", ["Cowok (Ardi)", "Cewek (Gadis)"])
+
+elif tts_provider == "OpenAI (Pro)":
+    if not OPENAI_API_KEY:
+        st.sidebar.error("⚠️ Masukkan OPENAI_API_KEY di secrets.toml!")
+    voice_option = st.sidebar.selectbox("Suara HD:", ["Cowok (Echo)", "Cowok (Onyx)", "Cewek (Nova)", "Cewek (Shimmer)"])
+
+elif tts_provider == "ElevenLabs (Ultra)":
     if not ELEVENLABS_API_KEY:
-        st.sidebar.error("⚠️ Masukkan ELEVENLABS_API_KEY di secrets.toml dulu!")
-    voice_option = st.sidebar.selectbox("Suara (Realistis):", ["Cowok (Adam)", "Cewek (Rachel)"])
+        st.sidebar.error("⚠️ Masukkan ELEVENLABS_API_KEY di secrets.toml!")
+    voice_option = st.sidebar.selectbox("Suara Ultra:", ["Cowok (Adam)", "Cewek (Rachel)"])
 
 st.sidebar.divider()
 num_scenes = st.sidebar.slider("Jumlah Scene", 1, 100, 5)
@@ -218,7 +246,7 @@ if st.sidebar.button("🗑️ Reset Baru"):
     st.session_state['final_video_path'] = None
     st.rerun()
 
-st.title("🎬 AI Video Maker (Dual Voice Mode)")
+st.title("🎬 AI Video Maker (Triple Voice)")
 st.markdown("---")
 
 # INPUT SECTION
@@ -271,10 +299,8 @@ if not st.session_state['generated_scenes']:
 
 # EDITOR SECTION
 else:
-    if tts_provider == "ElevenLabs (Pro)":
-        st.warning("⚠️ Mode ElevenLabs Aktif: Pastikan Anda memiliki kuota API yang cukup.")
-    else:
-        st.info("ℹ️ Mode Gratis Aktif.")
+    if "Pro" in tts_provider or "Ultra" in tts_provider:
+        st.warning(f"⚠️ Mode Berbayar Aktif: {tts_provider}. Pastikan kuota API cukup.")
     
     with st.container():
         for i, scene in enumerate(st.session_state['generated_scenes']):
@@ -296,9 +322,12 @@ else:
     st.divider()
     
     if st.button("🚀 RENDER VIDEO", type="primary", use_container_width=True):
-        # Validasi Key ElevenLabs
-        if tts_provider == "ElevenLabs (Pro)" and not ELEVENLABS_API_KEY:
-            st.error("❌ Anda memilih mode ElevenLabs tapi API Key belum diisi di secrets.toml")
+        # Validasi Key
+        if tts_provider == "OpenAI (Pro)" and not OPENAI_API_KEY:
+            st.error("❌ API Key OpenAI kosong!")
+            st.stop()
+        if tts_provider == "ElevenLabs (Ultra)" and not ELEVENLABS_API_KEY:
+            st.error("❌ API Key ElevenLabs kosong!")
             st.stop()
 
         final_assets = []
@@ -306,11 +335,11 @@ else:
         progress_bar = st.progress(0)
         
         for idx, scene in enumerate(st.session_state['generated_scenes']):
-            # GENERATE AUDIO MENGGUNAKAN MANAGER (ROUTER)
+            # GENERATE AUDIO (ROUTER)
             audio_p = audio_manager(scene['narration'], tts_provider, voice_option)
             
-            if not audio_p and tts_provider == "ElevenLabs (Pro)":
-                st.error(f"Gagal generate suara ElevenLabs pada Scene {idx+1}. Cek kuota/Key.")
+            if not audio_p and "Gratis" not in tts_provider:
+                st.error(f"Gagal generate suara Pro pada Scene {idx+1}. Cek kuota/Key.")
                 st.stop()
             
             img_p = None
