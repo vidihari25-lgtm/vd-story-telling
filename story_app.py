@@ -20,11 +20,14 @@ import edge_tts
 import re
 import random
 import time
+import base64
+import streamlit.components.v1 as components
+from PIL import ImageDraw, ImageFont # Tambahan untuk Subtitle
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="AI Director Pro (Light)", 
+    page_title="AI Director Pro (Auto DL)", 
     page_icon="🎬", 
     layout="wide",
     initial_sidebar_state="expanded"
@@ -39,37 +42,20 @@ st.markdown("""
         font-family: 'Inter', sans-serif;
     }
 
-    /* 1. BACKGROUND UTAMA PUTIH */
-    .stApp {
-        background-color: #ffffff !important;
-        color: #1f2937 !important; /* Teks Hitam Abu */
-    }
-
-    /* 2. SIDEBAR ABU MUDA */
-    section[data-testid="stSidebar"] {
-        background-color: #f8fafc !important;
-        border-right: 1px solid #e2e8f0;
-    }
+    .stApp { background-color: #ffffff !important; color: #1f2937 !important; }
+    section[data-testid="stSidebar"] { background-color: #f8fafc !important; border-right: 1px solid #e2e8f0; }
     
-    /* 3. TEKS SIDEBAR HITAM */
-    section[data-testid="stSidebar"] h1, 
-    section[data-testid="stSidebar"] h2, 
-    section[data-testid="stSidebar"] h3, 
-    section[data-testid="stSidebar"] label, 
-    section[data-testid="stSidebar"] span, 
-    section[data-testid="stSidebar"] p,
-    section[data-testid="stSidebar"] div {
-        color: #1f2937 !important;
-    }
+    /* Paksa teks Sidebar Hitam */
+    section[data-testid="stSidebar"] * { color: #1f2937 !important; }
 
-    /* 4. INPUT FIELD (Putih Bersih) */
+    /* Input Field Putih */
     .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] {
         background-color: #ffffff !important;
         color: #000000 !important;
         border: 1px solid #cbd5e1 !important;
     }
     
-    /* 5. CARD / CONTAINER (Putih dengan Bayangan) */
+    /* Card Putih */
     div[data-testid="stExpander"], div[data-testid="stContainer"] {
         background-color: #ffffff;
         border: 1px solid #e5e7eb;
@@ -78,36 +64,13 @@ st.markdown("""
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
     
-    /* Teks dalam Expander harus hitam */
-    .streamlit-expanderContent p {
-        color: #1f2937 !important;
-    }
-
-    /* 6. TOMBOL GRADIENT BIRU */
+    /* Tombol */
     div[data-testid="stButton"] > button[kind="primary"] {
         background: linear-gradient(90deg, #2563eb 0%, #4f46e5 100%);
         color: white !important;
         border: none;
-        box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2);
-    }
-    div[data-testid="stButton"] > button[kind="primary"]:hover {
-        transform: translateY(-2px);
-    }
-    
-    /* 7. TABS */
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] { 
-        background-color: #f1f5f9; 
-        border-radius: 6px; 
-        color: #64748b; 
-        font-weight: 600;
-    }
-    .stTabs [aria-selected="true"] { 
-        background-color: #eff6ff !important; 
-        color: #2563eb !important; 
     }
 
-    /* Judul Gradient */
     .title-text {
         background: linear-gradient(135deg, #2563eb, #9333ea);
         -webkit-background-clip: text;
@@ -136,6 +99,68 @@ if 'generated_scenes' not in st.session_state: st.session_state['generated_scene
 if 'ai_images_data' not in st.session_state: st.session_state['ai_images_data'] = {}
 if 'final_video_path' not in st.session_state: st.session_state['final_video_path'] = None
 
+# --- FUNGSI AUTO DOWNLOAD (JS) ---
+def trigger_auto_download(file_path):
+    with open(file_path, "rb") as f:
+        data = f.read()
+    b64 = base64.b64encode(data).decode()
+    md = f"""
+        <a href="data:video/mp4;base64,{b64}" download="ai_story_video.mp4" id="download_link" style="display:none;">Download</a>
+        <script>
+            document.getElementById('download_link').click();
+        </script>
+    """
+    components.html(md, height=0)
+
+# --- FUNGSI BANTUAN SUBTITLE ---
+def draw_subtitle(pil_img, text):
+    draw = ImageDraw.Draw(pil_img)
+    W, H = pil_img.size
+    
+    # Setup Font (Default basic font jika font sistem tidak ketemu)
+    try:
+        # Coba load font umum, ukuran disesuaikan resolusi
+        font_size = int(H * 0.05) # 5% dari tinggi gambar
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except:
+        font = ImageFont.load_default()
+    
+    # Wrap Text Sederhana
+    margin = 40
+    chars_per_line = int(W / (font_size * 0.6)) # Estimasi kasar
+    lines = []
+    words = text.split()
+    current_line = []
+    
+    for word in words:
+        current_line.append(word)
+        if len(" ".join(current_line)) > chars_per_line:
+            current_line.pop()
+            lines.append(" ".join(current_line))
+            current_line = [word]
+    lines.append(" ".join(current_line))
+    
+    # Gambar Background & Teks
+    text_height = len(lines) * (font_size + 10)
+    bg_y1 = H - text_height - margin - 20
+    bg_y2 = H - margin + 10
+    
+    # Semi-transparent black box
+    overlay = PIL.Image.new('RGBA', pil_img.size, (0,0,0,0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    overlay_draw.rectangle([(margin, bg_y1), (W-margin, bg_y2)], fill=(0,0,0,160))
+    pil_img = PIL.Image.alpha_composite(pil_img.convert('RGBA'), overlay).convert('RGB')
+    
+    draw = ImageDraw.Draw(pil_img)
+    y_text = bg_y1 + 10
+    for line in lines:
+        # Menengahkan teks (Metode manual karena getbbox berbeda tiap versi PIL)
+        # Kita pakai rata kiri dengan margin saja agar aman
+        draw.text((margin + 20, y_text), line, font=font, fill=(255, 255, 255))
+        y_text += font_size + 5
+        
+    return pil_img
+
 # --- FUNGSI LOGIKA ---
 def extract_json(text):
     try:
@@ -146,27 +171,27 @@ def extract_json(text):
         return json.loads(text)
     except: return None
 
-def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_scenes):
+def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_scenes, language):
     genai.configure(api_key=api_key)
-    mode_instructions = {
-        "Judul Cerita": f"Create a story based on title: '{input_text}'",
-        "Sinopsis": f"Expand this synopsis: '{input_text}'",
-        "Cerita Jadi": f"Adapt this exact story: '{input_text}'"
-    }
+    
+    lang_instruction = "Narration MUST be in Indonesian Language." if language == "Indonesia" else "Narration MUST be in English Language."
     
     prompt = f"""
     Role: Professional Movie Director.
     Task: Create a video script.
-    Context: {mode_instructions.get(input_mode, input_text)}
+    Input Mode: {input_mode}.
+    Story Context: '{input_text}'
     Characters: {char_desc}
     
-    Requirement: Create EXACTLY {target_scenes} scenes.
+    Requirement: 
+    1. Create EXACTLY {target_scenes} scenes.
+    2. {lang_instruction}
     
     OUTPUT FORMAT (JSON ARRAY ONLY):
     [
         {{
             "scene_number": 1,
-            "narration": "Narasi dalam Bahasa Indonesia...",
+            "narration": "Narration text here...",
             "image_prompt": "Cinematic shot of [Character], [Action], detailed background, 8k, photorealistic, bright lighting"
         }}
     ]
@@ -182,7 +207,6 @@ def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_sce
         return f"API ERROR: {str(e)}"
 
 def generate_image_pollinations(prompt):
-    # Tambahkan "bright lighting" agar gambar tidak gelap
     clean = requests.utils.quote(f"{prompt}, bright cinematic lighting, high quality")
     seed = random.randint(1, 99999)
     url = f"https://image.pollinations.ai/prompt/{clean}?width=1280&height=720&seed={seed}&nologo=true&model=flux"
@@ -224,7 +248,10 @@ def generate_audio_elevenlabs(text, voice_id, api_key):
 
 def audio_manager(text, provider, selected_voice):
     if "Gratis" in provider:
-        voice_id = "id-ID-ArdiNeural" if "Ardi" in selected_voice else "id-ID-GadisNeural"
+        # Mapping suara berdasarkan gender dan bahasa (sederhana)
+        if "Indonesia" in text or True: # Default Indonesia mapping
+            voice_id = "id-ID-ArdiNeural" if "Ardi" in selected_voice else "id-ID-GadisNeural"
+        
         try:
             temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
             temp.close()
@@ -240,8 +267,8 @@ def audio_manager(text, provider, selected_voice):
         vid = "pNInz6obpgDQGcFmaJgB" if "Adam" in selected_voice else "21m00Tcm4TlvDq8ikWAM"
         return generate_audio_elevenlabs(text, vid, ELEVENLABS_API_KEY)
 
-# --- VIDEO ENGINE ---
-def create_final_video(assets):
+# --- VIDEO ENGINE (MODIFIED FOR SUBTITLES) ---
+def create_final_video(assets, use_subtitle=False):
     clips = []
     log_box = st.empty()
     W, H = 1280, 720 
@@ -255,6 +282,11 @@ def create_final_video(assets):
             if original_img.mode != 'RGB':
                 original_img = original_img.convert('RGB')
             clean_img = original_img.resize((W, H), PIL.Image.LANCZOS)
+            
+            # === FITUR SUBTITLE OTOMATIS ===
+            if use_subtitle and 'text' in asset:
+                clean_img = draw_subtitle(clean_img, asset['text'])
+            # ===============================
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
                 clean_img.save(f, quality=95)
@@ -292,7 +324,11 @@ def create_final_video(assets):
 with st.sidebar:
     st.markdown("### 🎛️ Control Panel")
     
-    with st.expander("🔊 Audio Settings", expanded=True):
+    # 1. BAHASA
+    story_lang = st.selectbox("🌐 Bahasa Cerita (Language):", ["Indonesia", "English"])
+
+    # 2. AUDIO
+    with st.expander("🔊 Pengaturan Suara", expanded=True):
         tts_provider = st.radio("Provider:", ["Edge-TTS (Gratis)", "OpenAI (Pro)", "ElevenLabs (Ultra)"])
         
         voice_option = ""
@@ -305,7 +341,13 @@ with st.sidebar:
             if not ELEVENLABS_API_KEY: st.error("❌ Butuh ELEVENLABS_API_KEY")
             voice_option = st.selectbox("Model:", ["Cowok (Adam)", "Cewek (Rachel)"])
 
+    # 3. CONFIG SCENE & DOWNLOAD
     num_scenes = st.slider("Jumlah Scene:", 1, 30, 5)
+    
+    st.markdown("---")
+    st.markdown("**Opsi Rendering:**")
+    enable_subtitle = st.checkbox("📝 Tampilkan Subtitle Otomatis", value=True)
+    auto_dl = st.checkbox("⬇️ Otomatis Download saat selesai", value=False)
     
     st.markdown("---")
     if st.button("🗑️ Reset Project", use_container_width=True):
@@ -341,8 +383,8 @@ if not st.session_state['generated_scenes']:
                 st.write("Analisis karakter...")
                 chars = f"Main: {char1}. Support: {char2}."
                 
-                st.write("Menulis naskah...")
-                res = generate_scenes_logic(GEMINI_API_KEY, story, mode, chars, num_scenes)
+                st.write(f"Menulis naskah ({story_lang})...")
+                res = generate_scenes_logic(GEMINI_API_KEY, story, mode, chars, num_scenes, story_lang)
                 
                 if isinstance(res, list):
                     st.session_state['generated_scenes'] = res
@@ -377,9 +419,11 @@ else:
                 uploaded = st.file_uploader("Atau Upload:", key=f"up_{i}", label_visibility="collapsed")
                 
                 if uploaded: 
-                    st.image(uploaded, use_container_width=True)
+                    # TAMPILAN GAMBAR LEBIH KECIL (HEMAT RUANG)
+                    st.image(uploaded, width=250) 
                 elif i in st.session_state['ai_images_data']: 
-                    st.image(st.session_state['ai_images_data'][i], use_container_width=True)
+                    # TAMPILAN GAMBAR LEBIH KECIL (HEMAT RUANG)
+                    st.image(st.session_state['ai_images_data'][i], width=250)
                 else:
                     st.info("Belum ada gambar")
             st.divider()
@@ -412,21 +456,32 @@ else:
             if img: last_img = img
             elif last_img: img = last_img
             
-            if img and aud: assets.append({'image':img, 'audio':aud})
+            # Masukkan juga teks untuk subtitle
+            if img and aud: 
+                assets.append({
+                    'image': img, 
+                    'audio': aud, 
+                    'text': sc['narration'] # Teks untuk subtitle
+                })
             bar.progress((idx+1)/len(st.session_state['generated_scenes']))
         
         if assets:
-            vid_path = create_final_video(assets)
+            # Panggil fungsi video dengan opsi Subtitle
+            vid_path = create_final_video(assets, use_subtitle=enable_subtitle)
             if vid_path:
                 st.session_state['final_video_path'] = vid_path
                 st.balloons()
+                
+                # JIKA AUTO DOWNLOAD DICENTANG
+                if auto_dl:
+                    trigger_auto_download(vid_path)
             else: st.error("Render Gagal.")
         else: st.warning("Tidak ada aset untuk dirender.")
 
-    # DOWNLOAD
+    # DOWNLOAD MANUAL (SELALU ADA)
     if st.session_state['final_video_path'] and os.path.exists(st.session_state['final_video_path']):
         with st.container():
             st.success("✅ Video Siap!")
             st.video(st.session_state['final_video_path'])
             with open(st.session_state['final_video_path'], "rb") as f:
-                st.download_button("⬇️ Download MP4", data=f, file_name="video.mp4", mime="video/mp4", type="primary", use_container_width=True)
+                st.download_button("⬇️ Download MP4 Manual", data=f, file_name="video.mp4", mime="video/mp4", type="primary", use_container_width=True)
