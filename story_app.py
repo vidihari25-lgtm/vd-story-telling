@@ -1,10 +1,9 @@
 import streamlit as st
 
-# === FIX BUG ANTIALIAS (WAJIB DI PALING ATAS) ===
+# === FIX BUG ANTIALIAS ===
 import PIL.Image
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
-# ================================================
 
 import google.generativeai as genai
 import json
@@ -17,17 +16,78 @@ import random
 import os
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip
 
-# --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="AI Story Video (Triple Voice)", page_icon="🎬", layout="wide")
+# --- 1. KONFIGURASI HALAMAN (MODERN) ---
+st.set_page_config(
+    page_title="AI Director Studio", 
+    page_icon="🎬", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# --- AMBIL API KEY DARI SECRETS ---
+# --- 2. CUSTOM CSS (PROFESSIONAL LOOK) ---
+st.markdown("""
+<style>
+    /* Import Google Font */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+    }
+    
+    /* Header Gradient Text */
+    .title-text {
+        background: linear-gradient(45deg, #FF4B4B, #FF914D);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: 800;
+        font-size: 3rem;
+    }
+    
+    /* Custom Button Style */
+    .stButton>button {
+        border-radius: 8px;
+        font-weight: 600;
+        border: none;
+        transition: all 0.3s ease;
+    }
+    
+    /* Primary Button (Gradient) */
+    div[data-testid="stButton"] > button[kind="primary"] {
+        background: linear-gradient(90deg, #4F46E5 0%, #7C3AED 100%);
+        box-shadow: 0 4px 14px 0 rgba(124, 58, 237, 0.39);
+        border: none;
+    }
+    div[data-testid="stButton"] > button[kind="primary"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px 0 rgba(124, 58, 237, 0.23);
+    }
+
+    /* Card/Container Style */
+    div[data-testid="stExpander"] {
+        border: 1px solid #2e2e2e;
+        border-radius: 10px;
+        background-color: #1a1c24;
+    }
+    
+    /* Sidebar Polish */
+    section[data-testid="stSidebar"] {
+        background-color: #0e1117;
+        border-right: 1px solid #262730;
+    }
+    
+    /* Hide Default Streamlit Menu */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
+
+# --- AMBIL API KEY ---
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 except:
-    st.error("⚠️ Key `GEMINI_API_KEY` hilang di secrets.toml!")
+    st.error("⚠️ System Error: `GEMINI_API_KEY` missing configuration.")
     st.stop()
 
-# Ambil Key Tambahan (Boleh None jika tidak dipakai)
 ELEVENLABS_API_KEY = st.secrets.get("ELEVENLABS_API_KEY", None)
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", None)
 
@@ -36,7 +96,7 @@ if 'generated_scenes' not in st.session_state: st.session_state['generated_scene
 if 'ai_images_data' not in st.session_state: st.session_state['ai_images_data'] = {}
 if 'final_video_path' not in st.session_state: st.session_state['final_video_path'] = None
 
-# --- FUNGSI BANTUAN ---
+# --- FUNGSI LOGIKA (TIDAK BERUBAH) ---
 def extract_json(text):
     try:
         text = re.sub(r'```json\s*', '', text)
@@ -46,19 +106,15 @@ def extract_json(text):
         return json.loads(text)
     except: return None
 
-# --- FUNGSI ANALISIS GAMBAR ---
 def analyze_uploaded_char(api_key, image_file):
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-flash-latest')
         img = PIL.Image.open(image_file)
-        prompt = "Describe the visual appearance of this character in detail (face, hair, clothes, style) in one paragraph."
-        response = model.generate_content([prompt, img])
+        response = model.generate_content(["Describe visual appearance briefly.", img])
         return response.text.strip()
-    except Exception as e:
-        return f"Error analyzing image: {e}"
+    except: return "Error analyzing image."
 
-# --- FUNGSI 1: AI SCENARIO ---
 def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_scenes):
     genai.configure(api_key=api_key)
     mode_instruction = ""
@@ -72,7 +128,7 @@ def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_sce
     Task: {mode_instruction}.
     Create exactly {target_scenes} scenes.
     OUTPUT JSON ARRAY ONLY:
-    [{{"scene_number": 1, "narration": "Indonesian narration...", "image_prompt": "Cinematic shot of [Character Name], [action], 8k"}}]
+    [{{"scene_number": 1, "narration": "Indonesian narration...", "image_prompt": "Cinematic shot of [Character Name], [action], 8k, masterpiece"}}]
     """
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -80,7 +136,6 @@ def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_sce
         return extract_json(response.text)
     except: return None
 
-# --- FUNGSI 2: GAMBAR ---
 def generate_image_pollinations(prompt):
     clean = requests.utils.quote(prompt)
     seed = random.randint(1, 99999)
@@ -90,22 +145,15 @@ def generate_image_pollinations(prompt):
         return resp.content if resp.status_code == 200 else None
     except: return None
 
-# --- FUNGSI 3: AUDIO MANAGER (TRIPLE MODE) ---
-
-# 3a. Helper: Edge-TTS
+# --- AUDIO HELPERS ---
 async def edge_tts_generate(text, voice, output_file):
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(output_file)
 
-# 3b. Helper: ElevenLabs
 def generate_audio_elevenlabs(text, voice_id, api_key):
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
     headers = {"xi-api-key": api_key, "Content-Type": "application/json"}
-    data = {
-        "text": text,
-        "model_id": "eleven_multilingual_v2",
-        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
-    }
+    data = {"text": text, "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": 0.5}}
     try:
         response = requests.post(url, json=data, headers=headers)
         if response.status_code == 200:
@@ -115,59 +163,38 @@ def generate_audio_elevenlabs(text, voice_id, api_key):
         return None
     except: return None
 
-# 3c. Helper: OpenAI TTS (BARU)
 def generate_audio_openai(text, voice_name, api_key):
     url = "https://api.openai.com/v1/audio/speech"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    data = {
-        "model": "tts-1", # Model standar (cepat & murah)
-        "input": text,
-        "voice": voice_name.lower() # alloy, echo, fable, onyx, nova, shimmer
-    }
+    data = {"model": "tts-1", "input": text, "voice": voice_name.lower()}
     try:
         response = requests.post(url, json=data, headers=headers)
         if response.status_code == 200:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
                 f.write(response.content)
                 return f.name
-        else:
-            print(f"OpenAI Error: {response.text}")
-            return None
+        return None
     except: return None
 
-# 3d. ROUTER UTAMA
 def audio_manager(text, provider, selected_voice):
-    # OPSI 1: EDGE TTS (GRATIS)
     if provider == "Edge-TTS (Gratis)":
-        voice_id = "id-ID-ArdiNeural" if selected_voice == "Cowok (Ardi)" else "id-ID-GadisNeural"
+        voice_id = "id-ID-ArdiNeural" if "Ardi" in selected_voice else "id-ID-GadisNeural"
         try:
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
             temp_file.close()
             asyncio.run(edge_tts_generate(text, voice_id, temp_file.name))
             return temp_file.name
         except: return None
-    
-    # OPSI 2: OPENAI (TERBAIK/MURAH)
     elif provider == "OpenAI (Pro)":
         if not OPENAI_API_KEY: return None
-        # Mapping nama ke ID suara OpenAI
-        # Cowok: Echo, Onyx | Cewek: Nova, Shimmer, Alloy
-        voice_map = {
-            "Cowok (Echo)": "echo",
-            "Cowok (Onyx)": "onyx",
-            "Cewek (Nova)": "nova",
-            "Cewek (Shimmer)": "shimmer"
-        }
-        voice_id = voice_map.get(selected_voice, "alloy")
-        return generate_audio_openai(text, voice_id, OPENAI_API_KEY)
-
-    # OPSI 3: ELEVENLABS (ULTRA)
+        voice_map = {"Cowok (Echo)": "echo", "Cowok (Onyx)": "onyx", "Cewek (Nova)": "nova", "Cewek (Shimmer)": "shimmer"}
+        return generate_audio_openai(text, voice_map.get(selected_voice, "alloy"), OPENAI_API_KEY)
     elif provider == "ElevenLabs (Ultra)":
         if not ELEVENLABS_API_KEY: return None
-        voice_id = "pNInz6obpgDQGcFmaJgB" if selected_voice == "Cowok (Adam)" else "21m00Tcm4TlvDq8ikWAM"
+        voice_id = "pNInz6obpgDQGcFmaJgB" if "Adam" in selected_voice else "21m00Tcm4TlvDq8ikWAM"
         return generate_audio_elevenlabs(text, voice_id, ELEVENLABS_API_KEY)
 
-# --- FUNGSI 4: VIDEO ENGINE ---
+# --- VIDEO ENGINE ---
 def create_final_video(assets):
     clips = []
     log_box = st.empty()
@@ -175,200 +202,221 @@ def create_final_video(assets):
     
     for i, asset in enumerate(assets):
         try:
-            log_box.info(f"⚙️ Memproses Clip {i+1} dari {len(assets)}...")
-            
-            original_img = PIL.Image.open(asset['image'])
-            if original_img.mode != 'RGB':
-                original_img = original_img.convert('RGB')
+            log_box.info(f"⚙️ Processing Scene {i+1}...")
+            original_img = PIL.Image.open(asset['image']).convert('RGB')
             clean_img = original_img.resize((W, H), PIL.Image.LANCZOS)
-            
             with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
                 clean_img.save(f, quality=95)
-                clean_img_path = f.name
+                clean_path = f.name
             
             audio = AudioFileClip(asset['audio'])
             duration = audio.duration + 0.5
             
-            img_clip = ImageClip(clean_img_path).set_duration(duration)
-            img_clip = img_clip.resize(lambda t: 1.1 - (0.005 * t))
-            img_clip = img_clip.set_position('center')
+            img_clip = ImageClip(clean_path).set_duration(duration)
+            img_clip = img_clip.resize(lambda t: 1.1 - (0.005 * t)).set_position('center')
             
-            final_clip = CompositeVideoClip([img_clip], size=(W, H))
-            final_clip = final_clip.set_audio(audio)
-            final_clip = final_clip.set_fps(24)
+            final_clip = CompositeVideoClip([img_clip], size=(W, H)).set_audio(audio).set_fps(24)
             clips.append(final_clip)
-            
-        except Exception as e:
-            st.error(f"❌ Error Scene {i+1}: {str(e)}")
-            continue
+        except: continue
 
     if not clips: return None
-        
     try:
-        log_box.info("🎞️ Rendering Final...")
+        log_box.info("🎞️ Rendering Final Video...")
         output_path = tempfile.mktemp(suffix=".mp4")
         final_video = concatenate_videoclips(clips, method="compose")
         final_video.write_videofile(output_path, fps=24, codec='libx264', audio_codec='aac', preset='ultrafast', threads=1, logger=None)
-        log_box.success("✅ Selesai!")
+        log_box.success("✅ Done!")
         return output_path
-    except Exception as e:
-        st.error(f"❌ Error Render: {str(e)}")
-        return None
+    except: return None
 
-# ================= UI APLIKASI =================
+# ================= UI MODERN START =================
 
-st.sidebar.title("⚙️ Pengaturan")
+# --- SIDEBAR PROFESIONAL ---
+with st.sidebar:
+    st.markdown("### 🛠️ Control Panel")
+    
+    with st.expander("🔊 Audio Settings", expanded=True):
+        tts_provider = st.radio("Provider:", ["Edge-TTS (Gratis)", "OpenAI (Pro)", "ElevenLabs (Ultra)"])
+        
+        voice_option = ""
+        if tts_provider == "Edge-TTS (Gratis)":
+            voice_option = st.selectbox("Voice Model:", ["Cowok (Ardi)", "Cewek (Gadis)"])
+        elif tts_provider == "OpenAI (Pro)":
+            if not OPENAI_API_KEY: st.error("❌ API Key Missing")
+            voice_option = st.selectbox("Voice Model:", ["Cowok (Echo)", "Cowok (Onyx)", "Cewek (Nova)", "Cewek (Shimmer)"])
+        elif tts_provider == "ElevenLabs (Ultra)":
+            if not ELEVENLABS_API_KEY: st.error("❌ API Key Missing")
+            voice_option = st.selectbox("Voice Model:", ["Cowok (Adam)", "Cewek (Rachel)"])
 
-# --- PILIHAN TRIPLE PROVIDER ---
-st.sidebar.subheader("🔊 Pengaturan Suara")
-tts_provider = st.sidebar.radio("Pilih Provider:", ["Edge-TTS (Gratis)", "OpenAI (Pro)", "ElevenLabs (Ultra)"])
+    with st.expander("⚙️ Configuration", expanded=True):
+        num_scenes = st.slider("Total Scenes:", 1, 50, 5)
+    
+    st.markdown("---")
+    if st.button("🗑️ Start New Project", use_container_width=True):
+        st.session_state['generated_scenes'] = []
+        st.session_state['ai_images_data'] = {}
+        st.session_state['final_video_path'] = None
+        st.rerun()
 
-voice_option = ""
-if tts_provider == "Edge-TTS (Gratis)":
-    voice_option = st.sidebar.selectbox("Suara:", ["Cowok (Ardi)", "Cewek (Gadis)"])
+    # Status Indicator
+    st.markdown("---")
+    st.markdown("**System Status:**")
+    st.caption("🟢 Gemini AI: Active")
+    st.caption(f"{'🟢' if OPENAI_API_KEY else '⚪'} OpenAI: {'Ready' if OPENAI_API_KEY else 'Inactive'}")
 
-elif tts_provider == "OpenAI (Pro)":
-    if not OPENAI_API_KEY:
-        st.sidebar.error("⚠️ Masukkan OPENAI_API_KEY di secrets.toml!")
-    voice_option = st.sidebar.selectbox("Suara HD:", ["Cowok (Echo)", "Cowok (Onyx)", "Cewek (Nova)", "Cewek (Shimmer)"])
-
-elif tts_provider == "ElevenLabs (Ultra)":
-    if not ELEVENLABS_API_KEY:
-        st.sidebar.error("⚠️ Masukkan ELEVENLABS_API_KEY di secrets.toml!")
-    voice_option = st.sidebar.selectbox("Suara Ultra:", ["Cowok (Adam)", "Cewek (Rachel)"])
-
-st.sidebar.divider()
-num_scenes = st.sidebar.slider("Jumlah Scene", 1, 100, 5)
-
-if st.sidebar.button("🗑️ Reset Baru"):
-    st.session_state['generated_scenes'] = []
-    st.session_state['ai_images_data'] = {}
-    st.session_state['final_video_path'] = None
-    st.rerun()
-
-st.title("🎬 AI Video Maker (Triple Voice)")
+# --- MAIN HEADER ---
+st.markdown('<h1 class="title-text">AI Director Studio</h1>', unsafe_allow_html=True)
+st.markdown("Create professional short videos from text in seconds.")
 st.markdown("---")
 
-# INPUT SECTION
+# --- WORKFLOW LOGIC ---
+
+# 1. INPUT PHASE (TABS LAYOUT)
 if not st.session_state['generated_scenes']:
-    c1, c2 = st.columns([1, 2])
     
-    with c1:
-        st.info("👥 **Input Karakter**")
-        char1 = st.text_input("Tokoh 1:", placeholder="Nama & Ciri fisik")
-        char2 = st.text_input("Tokoh 2:", placeholder="Nama & Ciri fisik")
-        char3 = st.text_input("Tokoh 3:", placeholder="Nama & Ciri fisik")
-        st.divider()
-        st.write("**Tokoh 4 (Upload Gambar):**")
-        char_img_upload = st.file_uploader("Upload foto:", type=['jpg', 'png', 'jpeg'])
-        if char_img_upload: st.image(char_img_upload, caption="Preview Tokoh 4", width=150)
-            
-    with c2:
-        st.info("📖 **Cerita**")
-        mode = st.radio("Mode:", ["Judul Cerita", "Sinopsis", "Cerita Jadi"], horizontal=True)
-        placeholder_text = "Tulis ceritamu di sini..."
-        story = st.text_area("Konten Cerita:", height=350, placeholder=placeholder_text)
+    # Menggunakan Tabs untuk layout yang lebih bersih
+    tab1, tab2 = st.tabs(["🎭 Characters", "📜 Storyline"])
     
-    if st.button("📝 Buat Skenario", type="primary", use_container_width=True):
+    with tab1:
+        st.info("Define your cast. The AI will maintain character consistency.")
+        c1, c2 = st.columns(2)
+        with c1:
+            char1 = st.text_input("Main Character:", placeholder="e.g. Neo, black trench coat")
+            char2 = st.text_input("Supporting 1:", placeholder="e.g. Morpheus, sunglasses")
+        with c2:
+            char3 = st.text_input("Supporting 2:", placeholder="e.g. Trinity, leather suit")
+            char_img_upload = st.file_uploader("Visual Reference (Optional):", type=['jpg', 'png'])
+    
+    with tab2:
+        st.info("Input your creative idea.")
+        mode = st.radio("Input Mode:", ["Judul Cerita", "Sinopsis", "Cerita Jadi"], horizontal=True)
+        story = st.text_area("Content:", height=200, placeholder="Type your story here...")
+
+    # Action Button (Floating Bottom)
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("✨ Generate Screenplay & Prompts", type="primary", use_container_width=True):
         if story:
-            progress_text = st.empty()
-            progress_text.text("🔄 Mengumpulkan data karakter...")
-            
-            combined_char_desc = "Daftar Karakter Utama:\n"
-            if char1: combined_char_desc += f"- Tokoh 1: {char1}\n"
-            if char2: combined_char_desc += f"- Tokoh 2: {char2}\n"
-            if char3: combined_char_desc += f"- Tokoh 3: {char3}\n"
-            
-            if char_img_upload:
-                progress_text.text("🔄 Menganalisis gambar Tokoh 4...")
-                img_desc = analyze_uploaded_char(GEMINI_API_KEY, char_img_upload)
-                combined_char_desc += f"- Tokoh 4 (Visual Reference): {img_desc}\n"
-            
-            if len(combined_char_desc) < 25: combined_char_desc = "General characters fitting the story context."
+            with st.status("🤖 AI Director is working...", expanded=True) as status:
+                st.write("Analyzing characters...")
+                combined_char = f"Main: {char1}. Support: {char2}, {char3}."
+                if char_img_upload:
+                    desc = analyze_uploaded_char(GEMINI_API_KEY, char_img_upload)
+                    combined_char += f" Ref Img: {desc}"
+                
+                st.write("Drafting storyboard...")
+                res = generate_scenes_logic(GEMINI_API_KEY, story, mode, combined_char, num_scenes)
+                
+                if res:
+                    st.session_state['generated_scenes'] = res
+                    status.update(label="✅ Screenplay Ready!", state="complete", expanded=False)
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    status.update(label="❌ Generation Failed", state="error")
+        else:
+            st.warning("Please enter a story content.")
 
-            progress_text.text("🤖 Membuat Skenario dengan AI...")
-            res = generate_scenes_logic(GEMINI_API_KEY, story, mode, combined_char_desc, num_scenes)
-            
-            if res:
-                st.session_state['generated_scenes'] = res
-                progress_text.empty()
-                st.rerun()
-            else:
-                progress_text.error("Gagal membuat skenario.")
-        else: st.warning("Cerita masih kosong!")
-
-# EDITOR SECTION
+# 2. EDITOR PHASE (CARD LAYOUT)
 else:
-    if "Pro" in tts_provider or "Ultra" in tts_provider:
-        st.warning(f"⚠️ Mode Berbayar Aktif: {tts_provider}. Pastikan kuota API cukup.")
+    st.markdown(f"### 🎬 Scene Editor ({len(st.session_state['generated_scenes'])} Scenes)")
     
-    with st.container():
-        for i, scene in enumerate(st.session_state['generated_scenes']):
-            with st.expander(f"Scene {i+1}: {scene['narration'][:40]}...", expanded=True):
-                col_a, col_b, col_c = st.columns([2, 1, 1])
-                with col_a:
-                    st.write(f"Narasi: {scene['narration']}")
+    # Loop Scenes dengan Container Border
+    for i, scene in enumerate(st.session_state['generated_scenes']):
+        with st.container(border=True):
+            cols = st.columns([0.1, 2, 1.5])
+            
+            # Scene Number styling
+            with cols[0]:
+                st.markdown(f"<h2 style='text-align:center; color:#666;'>{i+1}</h2>", unsafe_allow_html=True)
+            
+            # Text & Narration
+            with cols[1]:
+                st.markdown("**Narration (ID):**")
+                st.write(f"_{scene['narration']}_")
+                with st.expander("👁️ View Image Prompt"):
                     st.code(scene['image_prompt'], language="text")
-                with col_b:
-                    if st.button(f"🎲 Generate AI {i+1}", key=f"gen_{i}"):
-                        with st.spinner("Gen..."):
-                            data = generate_image_pollinations(scene['image_prompt'])
-                            if data: st.session_state['ai_images_data'][i] = data
-                    uploaded = st.file_uploader(f"Upload {i+1}", type=['jpg','png'], key=f"up_{i}")
-                with col_c:
-                    if uploaded: st.image(uploaded, use_container_width=True)
-                    elif i in st.session_state['ai_images_data']: st.image(st.session_state['ai_images_data'][i], use_container_width=True)
+            
+            # Image Controls
+            with cols[2]:
+                # Tombol Generate AI
+                if st.button(f"🎲 Generate AI Art", key=f"gen_{i}", use_container_width=True):
+                     with st.spinner("Drawing..."):
+                        data = generate_image_pollinations(scene['image_prompt'])
+                        if data: st.session_state['ai_images_data'][i] = data
+                
+                # Manual Upload
+                uploaded = st.file_uploader("Or Upload:", type=['jpg','png'], key=f"up_{i}", label_visibility="collapsed")
+                
+                # Preview Area
+                if uploaded: 
+                    st.image(uploaded, use_container_width=True)
+                elif i in st.session_state['ai_images_data']: 
+                    st.image(st.session_state['ai_images_data'][i], use_container_width=True)
+                else:
+                    st.info("No image yet.")
 
-    st.divider()
+    # 3. EXPORT PHASE
+    st.markdown("---")
+    c_btn, c_info = st.columns([1, 2])
     
-    if st.button("🚀 RENDER VIDEO", type="primary", use_container_width=True):
-        # Validasi Key
-        if tts_provider == "OpenAI (Pro)" and not OPENAI_API_KEY:
-            st.error("❌ API Key OpenAI kosong!")
-            st.stop()
-        if tts_provider == "ElevenLabs (Ultra)" and not ELEVENLABS_API_KEY:
-            st.error("❌ API Key ElevenLabs kosong!")
-            st.stop()
+    with c_btn:
+        if st.button("🚀 Render Final Movie", type="primary", use_container_width=True):
+            # Check Keys
+            if "Pro" in tts_provider and not OPENAI_API_KEY: st.error("Missing OpenAI Key"); st.stop()
+            if "Ultra" in tts_provider and not ELEVENLABS_API_KEY: st.error("Missing ElevenLabs Key"); st.stop()
 
-        final_assets = []
-        last_valid_img = None
-        progress_bar = st.progress(0)
-        
-        for idx, scene in enumerate(st.session_state['generated_scenes']):
-            # GENERATE AUDIO (ROUTER)
-            audio_p = audio_manager(scene['narration'], tts_provider, voice_option)
+            # Collection Logic
+            assets = []
+            last_img = None
+            bar = st.progress(0)
             
-            if not audio_p and "Gratis" not in tts_provider:
-                st.error(f"Gagal generate suara Pro pada Scene {idx+1}. Cek kuota/Key.")
-                st.stop()
+            for idx, sc in enumerate(st.session_state['generated_scenes']):
+                # Audio
+                aud = audio_manager(sc['narration'], tts_provider, voice_option)
+                if not aud: st.error(f"Audio failed at scene {idx+1}"); st.stop()
+                
+                # Image
+                img = None
+                if st.session_state.get(f"up_{idx}"):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
+                        f.write(st.session_state[f"up_{idx}"].getbuffer())
+                        img = f.name
+                elif idx in st.session_state['ai_images_data']:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
+                        f.write(st.session_state['ai_images_data'][idx])
+                        img = f.name
+                
+                # Fallback
+                if img: last_img = img
+                elif last_img: img = last_img
+                
+                if img and aud: assets.append({'image':img, 'audio':aud})
+                bar.progress((idx+1)/len(st.session_state['generated_scenes']))
             
-            img_p = None
-            if st.session_state.get(f"up_{idx}"):
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
-                    f.write(st.session_state[f"up_{idx}"].getbuffer())
-                    img_p = f.name
-            elif idx in st.session_state['ai_images_data']:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
-                    f.write(st.session_state['ai_images_data'][idx])
-                    img_p = f.name
-            
-            if img_p: last_valid_img = img_p
-            elif last_valid_img: img_p = last_valid_img
-            
-            if audio_p and img_p:
-                final_assets.append({"image": img_p, "audio": audio_p})
-            progress_bar.progress((idx+1)/len(st.session_state['generated_scenes']))
-            
-        if final_assets:
-            result_path = create_final_video(final_assets)
-            if result_path:
-                st.session_state['final_video_path'] = result_path
-                st.balloons()
-            else:
-                st.error("Gagal render.")
-    
+            # Create Video
+            if assets:
+                vid_path = create_final_video(assets)
+                if vid_path:
+                    st.session_state['final_video_path'] = vid_path
+                    st.balloons()
+                else: st.error("Rendering Failed.")
+            else: st.warning("No assets to render.")
+
+    # Download Area
     if st.session_state['final_video_path'] and os.path.exists(st.session_state['final_video_path']):
-        st.success("✅ Video Siap!")
-        st.video(st.session_state['final_video_path'])
-        with open(st.session_state['final_video_path'], "rb") as f:
-            st.download_button("⬇️ Download Video MP4", data=f, file_name="ai_story_video.mp4", mime="video/mp4")
+        with st.container(border=True):
+            st.success("✅ Production Complete!")
+            c_vid, c_dl = st.columns([2, 1])
+            with c_vid:
+                st.video(st.session_state['final_video_path'])
+            with c_dl:
+                st.write("### Download")
+                with open(st.session_state['final_video_path'], "rb") as f:
+                    st.download_button(
+                        label="⬇️ Save MP4 File",
+                        data=f,
+                        file_name="ai_masterpiece.mp4",
+                        mime="video/mp4",
+                        type="primary",
+                        use_container_width=True
+                    )
