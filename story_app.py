@@ -18,7 +18,7 @@ import asyncio
 import edge_tts
 import re
 import random
-import time
+import time # <--- SUDAH DITAMBAHKAN (FIX ERROR SCREENSHOT 135)
 import base64
 import textwrap
 import numpy as np
@@ -28,7 +28,7 @@ from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, Com
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="AI Director Pro (Debug Mode)", 
+    page_title="AI Director Pro (Fixed)", 
     page_icon="🎬", 
     layout="wide",
     initial_sidebar_state="expanded"
@@ -163,7 +163,7 @@ def create_subtitle_layer(text, width, height):
         print(f"Sub Error: {e}")
         return None
 
-# --- AI LOGIC (DUAL LANG) ---
+# --- AI LOGIC (4 CHARACTERS + DUAL LANG) ---
 def extract_json(text):
     try:
         text = re.sub(r'```json\s*', '', text)
@@ -220,7 +220,7 @@ def generate_image_pollinations(prompt):
         return resp.content if resp.status_code == 200 else None
     except: return None
 
-# --- AUDIO (FIXED ERROR HANDLING) ---
+# --- AUDIO ---
 async def edge_tts_generate(text, voice, output_file):
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(output_file)
@@ -235,9 +235,8 @@ def generate_audio_openai(text, voice_name, api_key):
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
                 f.write(r.content)
                 return f.name
-        else:
-            return f"OpenAI Error: {r.text}"
-    except Exception as e: return f"OpenAI Connection: {e}"
+        return None
+    except: return None
 
 def generate_audio_elevenlabs(text, voice_id, api_key):
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}?output_format=mp3_44100_128"
@@ -254,11 +253,11 @@ def generate_audio_elevenlabs(text, voice_id, api_key):
                 f.write(r.content)
                 return f.name
         else:
-            return f"ElevenLabs Error ({r.status_code}): {r.text}"
+            # Mengembalikan pesan error agar user tahu
+            return f"ElevenLabs Error: {r.text}"
     except Exception as e: return f"ElevenLabs Connection: {e}"
 
 def audio_manager(text, provider, selected_voice, narr_lang_code):
-    # 1. MODE GRATIS (Edge-TTS) - FIX ASYNCIO
     if "Gratis" in provider:
         if narr_lang_code == "English":
             voice_id = "en-US-ChristopherNeural" if "Cowok" in selected_voice else "en-US-AriaNeural"
@@ -268,25 +267,19 @@ def audio_manager(text, provider, selected_voice, narr_lang_code):
         try:
             temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
             temp.close()
-            
-            # --- FIX: Safe Asyncio Loop ---
+            # FIX UNTUK ERROR ASYNC DI STREAMLIT
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             loop.run_until_complete(edge_tts_generate(text, voice_id, temp.name))
             loop.close()
-            # ------------------------------
-            
             return temp.name
-        except Exception as e:
-            return f"Edge-TTS Error: {str(e)}"
+        except Exception as e: return f"Edge-TTS Error: {e}"
         
-    # 2. OPENAI
     elif "OpenAI" in provider:
         if not OPENAI_API_KEY: return "Error: Missing OpenAI API Key"
         v_map = {"Cowok (Echo)": "echo", "Cowok (Onyx)": "onyx", "Cewek (Nova)": "nova", "Cewek (Shimmer)": "shimmer"}
         return generate_audio_openai(text, v_map.get(selected_voice, "alloy"), OPENAI_API_KEY)
     
-    # 3. ELEVENLABS
     elif "ElevenLabs" in provider:
         if not ELEVENLABS_API_KEY: return "Error: Missing ElevenLabs API Key"
         voice_map = {
@@ -482,6 +475,7 @@ else:
             # CEK APAKAH AUDIO BERHASIL
             if not aud or "Error" in str(aud): 
                 st.error(f"❌ Gagal Audio Scene {idx+1}: {aud}")
+                st.info("💡 TIPS: Jika pakai ElevenLabs Gratis, sering error di cloud. Coba ganti ke 'Edge-TTS' (Gratis).")
                 st.stop()
             
             img = None
