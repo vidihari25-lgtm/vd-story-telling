@@ -482,6 +482,20 @@ else:
     if st.session_state['final_video_path'] and os.path.exists(st.session_state['final_video_path']):
         with st.container():
             st.success("✅ Video Selesai!")
+            # ... (Letakkan di bagian paling bawah file app.py) ...
+
+with st.sidebar:
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style="text-align: center; font-size: 12px; color: #6b7280;">
+            © 2026 <b>VDMotionStudio</b><br>
+            <i>Created with AI Director Pro</i>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
             st.video(st.session_state['final_video_path'])
             with open(st.session_state['final_video_path'], "rb") as f:
                 st.download_button("⬇️ Download Manual", data=f, file_name="video.mp4", mime="video/mp4", type="primary", use_container_width=True)
+
