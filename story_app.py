@@ -1,9 +1,11 @@
 import streamlit as st
 
-# === FIX BUG ANTIALIAS ===
+# === PERBAIKAN FATAL 1: ANTIALIAS ERROR ===
+# Kode ini WAJIB ditaruh paling atas sebelum import library lain
 import PIL.Image
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
+# ==========================================
 
 import google.generativeai as genai
 import json
@@ -16,7 +18,7 @@ import random
 import os
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip
 
-# --- 1. KONFIGURASI HALAMAN (MODERN) ---
+# --- 1. KONFIGURASI HALAMAN (PAKSA LIGHT MODE) ---
 st.set_page_config(
     page_title="AI Director Studio", 
     page_icon="🎬", 
@@ -24,58 +26,81 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. CUSTOM CSS (PROFESSIONAL LOOK) ---
+# --- 2. CUSTOM CSS (FIX TULISAN HILANG) ---
 st.markdown("""
 <style>
-    /* Import Google Font */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+    /* Import Font Keren */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&display=swap');
     
     html, body, [class*="css"] {
         font-family: 'Inter', sans-serif;
     }
     
-    /* Header Gradient Text */
+    /* === PERBAIKAN FATAL 2: MEMAKSA BACKGROUND PUTIH === */
+    /* Menggunakan !important agar tidak kalah dengan Dark Mode HP/Laptop */
+    
+    /* Background Utama */
+    .stApp {
+        background-color: #ffffff !important;
+        color: #1f2937 !important;
+    }
+    
+    /* Background Sidebar */
+    section[data-testid="stSidebar"] {
+        background-color: #f8fafc !important; /* Abu-abu sangat muda */
+        border-right: 1px solid #e2e8f0;
+    }
+    
+    /* Memaksa Warna Teks di Sidebar agar terlihat */
+    section[data-testid="stSidebar"] .stMarkdown, 
+    section[data-testid="stSidebar"] h1, 
+    section[data-testid="stSidebar"] h2, 
+    section[data-testid="stSidebar"] h3, 
+    section[data-testid="stSidebar"] label, 
+    section[data-testid="stSidebar"] span,
+    section[data-testid="stSidebar"] p {
+        color: #1f2937 !important; /* Warna Teks Abu Gelap */
+    }
+    
+    /* Judul Gradient */
     .title-text {
-        background: linear-gradient(45deg, #FF4B4B, #FF914D);
+        background: linear-gradient(135deg, #2563eb, #9333ea);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         font-weight: 800;
         font-size: 3rem;
+        letter-spacing: -1px;
     }
     
-    /* Custom Button Style */
-    .stButton>button {
-        border-radius: 8px;
-        font-weight: 600;
-        border: none;
-        transition: all 0.3s ease;
+    /* Kotak Input (Agar tidak hitam di mode gelap) */
+    .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] {
+        background-color: #ffffff !important;
+        color: #1f2937 !important;
+        border: 1px solid #cbd5e1 !important;
     }
     
-    /* Primary Button (Gradient) */
+    /* Tombol Keren */
     div[data-testid="stButton"] > button[kind="primary"] {
-        background: linear-gradient(90deg, #4F46E5 0%, #7C3AED 100%);
-        box-shadow: 0 4px 14px 0 rgba(124, 58, 237, 0.39);
+        background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 100%);
+        color: white !important;
         border: none;
-    }
-    div[data-testid="stButton"] > button[kind="primary"]:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px 0 rgba(124, 58, 237, 0.23);
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
     }
 
-    /* Card/Container Style */
-    div[data-testid="stExpander"] {
-        border: 1px solid #2e2e2e;
-        border-radius: 10px;
-        background-color: #1a1c24;
+    /* Tabs Style */
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stTabs [data-baseweb="tab"] {
+        background-color: #f1f5f9;
+        border-radius: 8px;
+        color: #64748b;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #eff6ff !important;
+        color: #2563eb !important;
+        font-weight: 600;
     }
     
-    /* Sidebar Polish */
-    section[data-testid="stSidebar"] {
-        background-color: #0e1117;
-        border-right: 1px solid #262730;
-    }
-    
-    /* Hide Default Streamlit Menu */
+    /* Sembunyikan Menu Bawaan */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
 </style>
@@ -96,7 +121,7 @@ if 'generated_scenes' not in st.session_state: st.session_state['generated_scene
 if 'ai_images_data' not in st.session_state: st.session_state['ai_images_data'] = {}
 if 'final_video_path' not in st.session_state: st.session_state['final_video_path'] = None
 
-# --- FUNGSI LOGIKA (TIDAK BERUBAH) ---
+# --- FUNGSI LOGIKA ---
 def extract_json(text):
     try:
         text = re.sub(r'```json\s*', '', text)
@@ -128,7 +153,7 @@ def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_sce
     Task: {mode_instruction}.
     Create exactly {target_scenes} scenes.
     OUTPUT JSON ARRAY ONLY:
-    [{{"scene_number": 1, "narration": "Indonesian narration...", "image_prompt": "Cinematic shot of [Character Name], [action], 8k, masterpiece"}}]
+    [{{"scene_number": 1, "narration": "Indonesian narration...", "image_prompt": "Cinematic shot of [Character Name], [action], 8k, masterpiece, photorealistic, bright lighting"}}]
     """
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -203,8 +228,14 @@ def create_final_video(assets):
     for i, asset in enumerate(assets):
         try:
             log_box.info(f"⚙️ Processing Scene {i+1}...")
-            original_img = PIL.Image.open(asset['image']).convert('RGB')
+            # Fix PIL Image loading
+            original_img = PIL.Image.open(asset['image'])
+            if original_img.mode != 'RGB':
+                original_img = original_img.convert('RGB')
+                
+            # Gunakan LANCZOS karena sudah di-patch di atas
             clean_img = original_img.resize((W, H), PIL.Image.LANCZOS)
+            
             with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
                 clean_img.save(f, quality=95)
                 clean_path = f.name
@@ -213,11 +244,15 @@ def create_final_video(assets):
             duration = audio.duration + 0.5
             
             img_clip = ImageClip(clean_path).set_duration(duration)
+            
+            # Efek Zoom Out
             img_clip = img_clip.resize(lambda t: 1.1 - (0.005 * t)).set_position('center')
             
             final_clip = CompositeVideoClip([img_clip], size=(W, H)).set_audio(audio).set_fps(24)
             clips.append(final_clip)
-        except: continue
+        except Exception as e:
+            print(f"Error scene {i}: {e}")
+            continue
 
     if not clips: return None
     try:
@@ -229,7 +264,7 @@ def create_final_video(assets):
         return output_path
     except: return None
 
-# ================= UI MODERN START =================
+# ================= UI MODERN (LIGHT - FIXED) =================
 
 # --- SIDEBAR PROFESIONAL ---
 with st.sidebar:
@@ -274,7 +309,6 @@ st.markdown("---")
 # 1. INPUT PHASE (TABS LAYOUT)
 if not st.session_state['generated_scenes']:
     
-    # Menggunakan Tabs untuk layout yang lebih bersih
     tab1, tab2 = st.tabs(["🎭 Characters", "📜 Storyline"])
     
     with tab1:
@@ -325,9 +359,9 @@ else:
         with st.container(border=True):
             cols = st.columns([0.1, 2, 1.5])
             
-            # Scene Number styling
+            # Scene Number
             with cols[0]:
-                st.markdown(f"<h2 style='text-align:center; color:#666;'>{i+1}</h2>", unsafe_allow_html=True)
+                st.markdown(f"<h2 style='text-align:center; color:#9ca3af;'>{i+1}</h2>", unsafe_allow_html=True)
             
             # Text & Narration
             with cols[1]:
@@ -338,16 +372,13 @@ else:
             
             # Image Controls
             with cols[2]:
-                # Tombol Generate AI
                 if st.button(f"🎲 Generate AI Art", key=f"gen_{i}", use_container_width=True):
                      with st.spinner("Drawing..."):
                         data = generate_image_pollinations(scene['image_prompt'])
                         if data: st.session_state['ai_images_data'][i] = data
                 
-                # Manual Upload
                 uploaded = st.file_uploader("Or Upload:", type=['jpg','png'], key=f"up_{i}", label_visibility="collapsed")
                 
-                # Preview Area
                 if uploaded: 
                     st.image(uploaded, use_container_width=True)
                 elif i in st.session_state['ai_images_data']: 
@@ -361,21 +392,17 @@ else:
     
     with c_btn:
         if st.button("🚀 Render Final Movie", type="primary", use_container_width=True):
-            # Check Keys
             if "Pro" in tts_provider and not OPENAI_API_KEY: st.error("Missing OpenAI Key"); st.stop()
             if "Ultra" in tts_provider and not ELEVENLABS_API_KEY: st.error("Missing ElevenLabs Key"); st.stop()
 
-            # Collection Logic
             assets = []
             last_img = None
             bar = st.progress(0)
             
             for idx, sc in enumerate(st.session_state['generated_scenes']):
-                # Audio
                 aud = audio_manager(sc['narration'], tts_provider, voice_option)
                 if not aud: st.error(f"Audio failed at scene {idx+1}"); st.stop()
                 
-                # Image
                 img = None
                 if st.session_state.get(f"up_{idx}"):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
@@ -386,14 +413,12 @@ else:
                         f.write(st.session_state['ai_images_data'][idx])
                         img = f.name
                 
-                # Fallback
                 if img: last_img = img
                 elif last_img: img = last_img
                 
                 if img and aud: assets.append({'image':img, 'audio':aud})
                 bar.progress((idx+1)/len(st.session_state['generated_scenes']))
             
-            # Create Video
             if assets:
                 vid_path = create_final_video(assets)
                 if vid_path:
@@ -420,5 +445,3 @@ else:
                         type="primary",
                         use_container_width=True
                     )
-
-
