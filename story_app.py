@@ -66,7 +66,7 @@ st.markdown("""
     div[data-testid="stExpander"] {
         border: 1px solid #2e2e2e;
         border-radius: 10px;
-        background-color: #ffffff;
+        background-color: #1a1c24;
     }
     
     /* Sidebar Polish */
@@ -420,4 +420,5 @@ else:
                         type="primary",
                         use_container_width=True
                     )
+
 
