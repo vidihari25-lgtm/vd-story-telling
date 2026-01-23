@@ -28,7 +28,7 @@ from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, Com
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="AI Director Pro (Auto-Fit Sub)", 
+    page_title="AI Director Pro (Fixed Border)", 
     page_icon="🎬", 
     layout="wide",
     initial_sidebar_state="expanded"
@@ -86,7 +86,7 @@ def trigger_auto_download(file_path):
         components.html(md, height=0)
     except: pass
 
-# --- FUNGSI SUBTITLE DINAMIS (90% LEBAR LAYAR) ---
+# --- FUNGSI SUBTITLE (BOX TIPIS & TRANSPARAN) ---
 def create_subtitle_layer(text, width, height):
     try:
         subtitle_img = PIL.Image.new('RGBA', (width, height), (0, 0, 0, 0))
@@ -97,7 +97,7 @@ def create_subtitle_layer(text, width, height):
         font_candidates = ["arialbd.ttf", "arial.ttf", "Roboto-Bold.ttf", "DejaVuSans-Bold.ttf"]
         for f_name in font_candidates:
             try:
-                ImageFont.truetype(f_name, 20) # Test load
+                ImageFont.truetype(f_name, 20)
                 font_path = f_name
                 break
             except: continue
@@ -105,23 +105,16 @@ def create_subtitle_layer(text, width, height):
         # 2. LOGIKA AUTO-FIT (90% LEBAR)
         target_width = width * 0.90
         
-        # Mulai dengan ukuran font estimasi
-        # Kita coba tebak agar muat 1 baris dulu
+        # Estimasi ukuran font
         estimated_font_size = int(target_width / (len(text) * 0.5))
-        
-        # Batasi ukuran minimal dan maksimal agar estetik
-        # Min: 3% tinggi (biar kebaca), Max: 7% tinggi (biar gak kegedean)
         min_font_size = int(height * 0.03)
         max_font_size = int(height * 0.07)
-        
         current_font_size = min(max(estimated_font_size, min_font_size), max_font_size)
         
-        # Load Font Awal
         if font_path: font = ImageFont.truetype(font_path, current_font_size)
         else: font = ImageFont.load_default()
         
-        # 3. WRAPPING JIKA KEPANJANGAN
-        # Cek apakah teks melebihi layar dengan font segitu?
+        # 3. WRAPPING
         try:
             bbox = draw.textbbox((0, 0), text, font=font)
             text_w = bbox[2] - bbox[0]
@@ -130,8 +123,6 @@ def create_subtitle_layer(text, width, height):
             
         lines = []
         if text_w > target_width:
-            # Jika kepanjangan, kita wrap (pecah baris)
-            # Hitung rata-rata char per baris
             avg_char_w = text_w / len(text)
             chars_per_line = int(target_width / avg_char_w)
             wrapper = textwrap.TextWrapper(width=chars_per_line, break_long_words=False)
@@ -140,8 +131,8 @@ def create_subtitle_layer(text, width, height):
             lines = [text]
             
         # 4. GAMBAR (POSISI BAWAH)
-        line_height = current_font_size * 1.3
-        total_text_height = len(lines) * line_height
+        line_spacing = current_font_size * 1.3
+        total_text_height = len(lines) * line_spacing
         
         # Margin bawah 8%
         current_y = height - (height * 0.08) - total_text_height
@@ -150,21 +141,30 @@ def create_subtitle_layer(text, width, height):
             try:
                 bbox = draw.textbbox((0, 0), line, font=font)
                 line_w = bbox[2] - bbox[0]
+                # line_h = bbox[3] - bbox[1] # Tidak dipakai agar konsisten
             except:
                 line_w = len(line) * (current_font_size * 0.5)
             
             x_pos = (width - line_w) / 2
             
-            # Shadow Box Transparan
-            padding = 8
+            # === PERBAIKAN BORDER/BOX ===
+            padding_x = 10 
+            padding_y = 4 # Lebih tipis vertikalnya
+            
+            # Hitung tinggi kotak background secara manual
+            # Agar ekor huruf (g, y, j) tidak kepotong, kita tambah sedikit ruang di bawah
+            # 'current_y' adalah bagian atas huruf kapital.
+            box_top = current_y - padding_y
+            box_bottom = current_y + current_font_size + (padding_y * 1.5) 
+            
             draw.rectangle(
-                [x_pos - padding, current_y - padding, x_pos + line_w + padding, current_y + line_height - padding],
-                fill=(0, 0, 0, 140)
+                [x_pos - padding_x, box_top, x_pos + line_w + padding_x, box_bottom],
+                fill=(0, 0, 0, 85) # TRANSPARANSI: 0 (Bening) - 255 (Pekat). Diset 85 (Tipis).
             )
             
             # Teks Kuning
             draw.text((x_pos, current_y), line, font=font, fill="#FFD700")
-            current_y += line_height
+            current_y += line_spacing
             
         return subtitle_img
         
@@ -284,6 +284,7 @@ def create_final_video(assets, use_subtitle=False):
         try:
             log_box.info(f"⚙️ Mengolah Scene {i+1}...")
             
+            # 1. LAYER 1: Background Zoom
             original_img = PIL.Image.open(asset['image'])
             if original_img.mode != 'RGB':
                 original_img = original_img.convert('RGB')
@@ -296,14 +297,13 @@ def create_final_video(assets, use_subtitle=False):
             audio = AudioFileClip(asset['audio'])
             duration = audio.duration + 0.5
             
-            # Layer 1: Background Zoom
             bg_clip = ImageClip(bg_path).set_duration(duration)
             bg_clip = bg_clip.resize(lambda t: 1.0 + (0.005 * t))
             bg_clip = bg_clip.set_position('center')
             
             final_clip_layers = [bg_clip]
             
-            # Layer 2: Subtitle (Static & 90% Width)
+            # 2. LAYER 2: Subtitle (Static & Fixed Box)
             if use_subtitle and 'text' in asset:
                 sub_img = create_subtitle_layer(asset['text'], W, H)
                 if sub_img:
@@ -358,7 +358,7 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("**Output Options:**")
-    enable_subtitle = st.checkbox("📝 Subtitle (Auto-Fit 90%)", value=True)
+    enable_subtitle = st.checkbox("📝 Subtitle (Transparan & Rapi)", value=True)
     auto_dl = st.checkbox("⬇️ Auto-Download Selesai Render", value=True)
     
     st.markdown("---")
