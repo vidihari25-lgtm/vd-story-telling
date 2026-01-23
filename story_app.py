@@ -20,14 +20,15 @@ import re
 import random
 import time
 import base64
-import textwrap # Penting untuk subtitle rapi
+import textwrap
+import numpy as np
 import streamlit.components.v1 as components
 from PIL import ImageDraw, ImageFont 
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="AI Director Pro (Fixed Sub)", 
+    page_title="AI Director Pro (Static Sub)", 
     page_icon="🎬", 
     layout="wide",
     initial_sidebar_state="expanded"
@@ -85,17 +86,21 @@ def trigger_auto_download(file_path):
         components.html(md, height=0)
     except: pass
 
-# --- FUNGSI SUBTITLE (REVISI: KECIL, STABIL, TENGAH) ---
-def draw_cinematic_subtitle(pil_img, text):
+# --- FUNGSI MEMBUAT LAYER SUBTITLE (TRANSPARAN) ---
+def create_subtitle_layer(text, width, height):
+    """
+    Membuat gambar transparan yang HANYA berisi teks subtitle.
+    Gambar ini nanti akan ditumpuk di atas video yang bergerak.
+    """
     try:
-        draw = ImageDraw.Draw(pil_img)
-        W, H = pil_img.size
+        # 1. Buat Canvas Transparan
+        subtitle_img = PIL.Image.new('RGBA', (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(subtitle_img)
         
-        # 1. UKURAN FONT: 3.5% dari Tinggi Layar (Standar Film)
-        # Tidak terlalu besar, tidak terlalu kecil
-        font_size = int(H * 0.035) 
+        # 2. UKURAN FONT: 2% dari Tinggi Layar (Sesuai Request)
+        font_size = int(height * 0.02) 
         
-        # Font Selection
+        # Load Font
         font = None
         font_candidates = ["arialbd.ttf", "arial.ttf", "Roboto-Bold.ttf", "DejaVuSans-Bold.ttf"]
         for f_name in font_candidates:
@@ -105,45 +110,50 @@ def draw_cinematic_subtitle(pil_img, text):
             except: continue
         if font is None: font = ImageFont.load_default()
             
-        # 2. WRAPPING TEXT (Agar tidak nabrak pinggir)
-        # Hitung karakter maksimal per baris (Lebar aman 90% layar)
+        # 3. WRAPPING TEXT
+        # Hitung karakter maksimal agar muat di 80% lebar layar
         avg_char_width = font_size * 0.5
-        chars_per_line = int((W * 0.9) / avg_char_width)
+        chars_per_line = int((width * 0.8) / avg_char_width)
         
         wrapper = textwrap.TextWrapper(width=chars_per_line, break_long_words=False)
         lines = wrapper.wrap(text)
         
-        # 3. POSISI FIX DI BAWAH (STABIL)
-        # Kita hitung dari bawah ke atas dengan margin tetap
-        line_height = font_size * 1.3
+        # 4. POSISI FIX DI BAWAH (STABIL)
+        line_height = font_size * 1.4
         total_text_height = len(lines) * line_height
         
-        # Margin bawah tetap: 8% dari bawah layar
-        bottom_margin = H * 0.08
-        current_y = H - bottom_margin - total_text_height
+        # Margin bawah: 5% dari bawah layar
+        bottom_margin = height * 0.05
+        current_y = height - bottom_margin - total_text_height
         
-        # 4. GAMBAR TEKS
+        # 5. GAMBAR TEKS
         for line in lines:
-            # Hitung lebar baris ini untuk centering
+            # Centering
             try:
                 bbox = draw.textbbox((0, 0), line, font=font)
                 text_w = bbox[2] - bbox[0]
             except:
                 text_w = len(line) * avg_char_width
             
-            x_pos = (W - text_w) / 2
+            x_pos = (width - text_w) / 2
             
-            # STROKE HITAM (Agar terbaca di gambar terang)
-            # Menggunakan parameter stroke_width (lebih rapi)
-            draw.text((x_pos, current_y), line, font=font, fill="#FFD700", stroke_width=2, stroke_fill="black")
+            # Shadow Box (Kotak hitam transparan di belakang teks agar terbaca)
+            padding = 5
+            draw.rectangle(
+                [x_pos - padding, current_y - padding, x_pos + text_w + padding, current_y + line_height - padding],
+                fill=(0, 0, 0, 128) # Hitam Transparan
+            )
+
+            # Teks Kuning
+            draw.text((x_pos, current_y), line, font=font, fill="#FFD700") 
             
             current_y += line_height
             
-        return pil_img
+        return subtitle_img
         
     except Exception as e:
         print(f"Subtitle Error: {e}")
-        return pil_img
+        return None
 
 # --- AI LOGIC ---
 def extract_json(text):
@@ -157,8 +167,6 @@ def extract_json(text):
 
 def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_scenes, language):
     genai.configure(api_key=api_key)
-    
-    # INSTRUKSI BAHASA YANG TEGAS
     lang_instruction = "Narration MUST be in Indonesian Language." if language == "Indonesia" else "Narration MUST be in English Language."
     
     prompt = f"""
@@ -169,13 +177,13 @@ def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_sce
     Requirement: 
     1. Create EXACTLY {target_scenes} scenes.
     2. {lang_instruction}
-    3. Keep narration concise (max 2 short sentences per scene) suitable for subtitles.
+    3. Keep narration concise (max 2 short sentences per scene).
     
     OUTPUT JSON ARRAY ONLY:
     [
         {{
             "scene_number": 1,
-            "narration": "Concise narration text...",
+            "narration": "Narration text...",
             "image_prompt": "Cinematic shot of [Character], [Action], 8k, bright lighting, wide angle"
         }}
     ]
@@ -247,7 +255,7 @@ def audio_manager(text, provider, selected_voice):
         vid = "pNInz6obpgDQGcFmaJgB" if "Adam" in selected_voice else "21m00Tcm4TlvDq8ikWAM"
         return generate_audio_elevenlabs(text, vid, ELEVENLABS_API_KEY)
 
-# --- VIDEO ENGINE ---
+# --- VIDEO ENGINE (STATIC SUBTITLE OVERLAY) ---
 def create_final_video(assets, use_subtitle=False):
     clips = []
     log_box = st.empty()
@@ -259,31 +267,49 @@ def create_final_video(assets, use_subtitle=False):
         try:
             log_box.info(f"⚙️ Mengolah Scene {i+1}...")
             
-            # 1. Image
+            # 1. LOAD IMAGE (LAYER 1 - Background)
             original_img = PIL.Image.open(asset['image'])
             if original_img.mode != 'RGB':
                 original_img = original_img.convert('RGB')
             clean_img = original_img.resize((W, H), PIL.Image.LANCZOS)
             
-            # 2. Add Subtitle (REVISI BARU)
-            if use_subtitle and 'text' in asset:
-                clean_img = draw_cinematic_subtitle(clean_img, asset['text'])
-            
+            # Simpan background bersih
             with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
                 clean_img.save(f, quality=95)
-                clean_path = f.name
+                bg_path = f.name
             
-            # 3. Audio & Video Clip
+            # 2. SETUP AUDIO & DURASI
             audio = AudioFileClip(asset['audio'])
             duration = audio.duration + 0.5
             
-            img_clip = ImageClip(clean_path).set_duration(duration)
+            # 3. BUAT CLIP BACKGROUND (Zoom In)
+            bg_clip = ImageClip(bg_path).set_duration(duration)
+            bg_clip = bg_clip.resize(lambda t: 1.0 + (0.005 * t)) # Efek Zoom pada background saja
+            bg_clip = bg_clip.set_position('center')
             
-            # ZOOM EFFECT HALUS
-            img_clip = img_clip.resize(lambda t: 1.0 + (0.005 * t))
+            # 4. BUAT LAYER SUBTITLE (LAYER 2 - Static)
+            final_clip_layers = [bg_clip] # Mulai dengan background
             
-            final_clip = CompositeVideoClip([img_clip], size=(W, H)).set_audio(audio).set_fps(24)
-            clips.append(final_clip)
+            if use_subtitle and 'text' in asset:
+                # Generate gambar transparan berisi teks
+                sub_img = create_subtitle_layer(asset['text'], W, H)
+                
+                if sub_img:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
+                        sub_img.save(f, format="PNG")
+                        sub_path = f.name
+                    
+                    # Buat clip subtitle yang TIDAK di-zoom
+                    sub_clip = ImageClip(sub_path).set_duration(duration)
+                    sub_clip = sub_clip.set_position('center')
+                    # Tumpuk di atas background
+                    final_clip_layers.append(sub_clip)
+            
+            # 5. GABUNGKAN (Composite)
+            final_composite = CompositeVideoClip(final_clip_layers, size=(W, H))
+            final_composite = final_composite.set_audio(audio).set_fps(24)
+            
+            clips.append(final_composite)
             success_count += 1
             
         except Exception as e:
@@ -316,8 +342,7 @@ def create_final_video(assets, use_subtitle=False):
 with st.sidebar:
     st.markdown("### 🎛️ Control Panel")
     
-    # 1. LANGUAGE SELECTOR
-    story_lang = st.selectbox("🌐 Bahasa Cerita (Subtitle):", ["Indonesia", "English"])
+    story_lang = st.selectbox("🌐 Bahasa:", ["Indonesia", "English"])
 
     with st.expander("🔊 Audio", expanded=True):
         tts_provider = st.radio("Provider:", ["Edge-TTS (Gratis)", "OpenAI (Pro)", "ElevenLabs (Ultra)"])
@@ -335,7 +360,7 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("**Output Options:**")
-    enable_subtitle = st.checkbox("📝 Subtitle Otomatis", value=True)
+    enable_subtitle = st.checkbox("📝 Subtitle (Static 2%)", value=True)
     auto_dl = st.checkbox("⬇️ Auto-Download Selesai Render", value=True)
     
     st.markdown("---")
@@ -396,7 +421,7 @@ else:
                         if data: st.session_state['ai_images_data'][i] = data
                 uploaded = st.file_uploader("Upload", key=f"up_{i}", label_visibility="collapsed")
                 
-                # GAMBAR KECIL (250px) - FIX TAMPILAN
+                # GAMBAR KECIL
                 if uploaded: st.image(uploaded, width=250)
                 elif i in st.session_state['ai_images_data']: st.image(st.session_state['ai_images_data'][i], width=250)
                 else: st.info("Kosong")
@@ -435,12 +460,10 @@ else:
             if vid_path:
                 st.session_state['final_video_path'] = vid_path
                 st.balloons()
-                # AUTO DOWNLOAD TRIGGER
                 if auto_dl: trigger_auto_download(vid_path)
             else: st.error("Render Gagal.")
         else: st.warning("Aset kosong.")
 
-    # MANUAL DOWNLOAD
     if st.session_state['final_video_path'] and os.path.exists(st.session_state['final_video_path']):
         with st.container():
             st.success("✅ Video Selesai!")
