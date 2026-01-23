@@ -3,10 +3,9 @@
 # ==========================================
 import os
 import sys
-# Kita import PIL dulu sebelum library lain
 import PIL.Image
 
-# Paksa tambahkan ANTIALIAS yang hilang di versi baru
+# Paksa tambahkan ANTIALIAS agar tidak error
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 # ==========================================
@@ -20,18 +19,18 @@ import asyncio
 import edge_tts
 import re
 import random
-import time  # <--- INI YANG HILANG KEMARIN
+import time
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="AI Director Pro", 
+    page_title="AI Director Pro (Light)", 
     page_icon="🎬", 
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- CSS (TEMA GELAP KONTRAST TINGGI) ---
+# --- CSS (TEMA TERANG / LIGHT MODE) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
@@ -40,19 +39,19 @@ st.markdown("""
         font-family: 'Inter', sans-serif;
     }
 
-    /* Paksa Background Gelap & Teks Putih */
+    /* 1. BACKGROUND UTAMA PUTIH */
     .stApp {
-        background-color: #0e1117 !important;
-        color: #ffffff !important;
+        background-color: #ffffff !important;
+        color: #1f2937 !important; /* Teks Hitam Abu */
     }
 
-    /* Sidebar Gelap */
+    /* 2. SIDEBAR ABU MUDA */
     section[data-testid="stSidebar"] {
-        background-color: #161b22 !important;
-        border-right: 1px solid #30363d;
+        background-color: #f8fafc !important;
+        border-right: 1px solid #e2e8f0;
     }
     
-    /* Pastikan semua teks di Sidebar Putih */
+    /* 3. TEKS SIDEBAR HITAM */
     section[data-testid="stSidebar"] h1, 
     section[data-testid="stSidebar"] h2, 
     section[data-testid="stSidebar"] h3, 
@@ -60,40 +59,57 @@ st.markdown("""
     section[data-testid="stSidebar"] span, 
     section[data-testid="stSidebar"] p,
     section[data-testid="stSidebar"] div {
-        color: #ffffff !important;
+        color: #1f2937 !important;
     }
 
-    /* Input Fields (Background Gelap, Teks Putih) */
+    /* 4. INPUT FIELD (Putih Bersih) */
     .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] {
-        background-color: #0d1117 !important;
-        color: #ffffff !important;
-        border: 1px solid #30363d !important;
-    }
-
-    /* Card Styling */
-    div[data-testid="stExpander"], div[data-testid="stContainer"] {
-        background-color: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 10px;
-        color: white;
-    }
-
-    /* Tombol Utama (Gradient Ungu Biru) */
-    div[data-testid="stButton"] > button[kind="primary"] {
-        background: linear-gradient(90deg, #6366f1 0%, #a855f7 100%);
-        color: white !important;
-        border: none;
-        font-weight: bold;
+        background-color: #ffffff !important;
+        color: #000000 !important;
+        border: 1px solid #cbd5e1 !important;
     }
     
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-    .stTabs [data-baseweb="tab"] { background-color: #21262d; border-radius: 5px; color: #c9d1d9; }
-    .stTabs [aria-selected="true"] { background-color: #1f6feb !important; color: white !important; }
+    /* 5. CARD / CONTAINER (Putih dengan Bayangan) */
+    div[data-testid="stExpander"], div[data-testid="stContainer"] {
+        background-color: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        color: #1f2937;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    
+    /* Teks dalam Expander harus hitam */
+    .streamlit-expanderContent p {
+        color: #1f2937 !important;
+    }
 
-    /* Judul */
+    /* 6. TOMBOL GRADIENT BIRU */
+    div[data-testid="stButton"] > button[kind="primary"] {
+        background: linear-gradient(90deg, #2563eb 0%, #4f46e5 100%);
+        color: white !important;
+        border: none;
+        box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2);
+    }
+    div[data-testid="stButton"] > button[kind="primary"]:hover {
+        transform: translateY(-2px);
+    }
+    
+    /* 7. TABS */
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+    .stTabs [data-baseweb="tab"] { 
+        background-color: #f1f5f9; 
+        border-radius: 6px; 
+        color: #64748b; 
+        font-weight: 600;
+    }
+    .stTabs [aria-selected="true"] { 
+        background-color: #eff6ff !important; 
+        color: #2563eb !important; 
+    }
+
+    /* Judul Gradient */
     .title-text {
-        background: linear-gradient(45deg, #38bdf8, #818cf8);
+        background: linear-gradient(135deg, #2563eb, #9333ea);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         font-weight: 800;
@@ -151,7 +167,7 @@ def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_sce
         {{
             "scene_number": 1,
             "narration": "Narasi dalam Bahasa Indonesia...",
-            "image_prompt": "Cinematic shot of [Character], [Action], detailed background, 8k, photorealistic"
+            "image_prompt": "Cinematic shot of [Character], [Action], detailed background, 8k, photorealistic, bright lighting"
         }}
     ]
     """
@@ -160,14 +176,14 @@ def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_sce
         model = genai.GenerativeModel('gemini-flash-latest')
         response = model.generate_content(prompt)
         result = extract_json(response.text)
-        if not result:
-            return f"GAGAL JSON. Raw: {response.text[:100]}..."
+        if not result: return f"JSON Error. Raw: {response.text[:100]}..."
         return result
     except Exception as e:
         return f"API ERROR: {str(e)}"
 
 def generate_image_pollinations(prompt):
-    clean = requests.utils.quote(prompt)
+    # Tambahkan "bright lighting" agar gambar tidak gelap
+    clean = requests.utils.quote(f"{prompt}, bright cinematic lighting, high quality")
     seed = random.randint(1, 99999)
     url = f"https://image.pollinations.ai/prompt/{clean}?width=1280&height=720&seed={seed}&nologo=true&model=flux"
     try:
@@ -224,7 +240,7 @@ def audio_manager(text, provider, selected_voice):
         vid = "pNInz6obpgDQGcFmaJgB" if "Adam" in selected_voice else "21m00Tcm4TlvDq8ikWAM"
         return generate_audio_elevenlabs(text, vid, ELEVENLABS_API_KEY)
 
-# --- VIDEO ENGINE (PATCHED) ---
+# --- VIDEO ENGINE ---
 def create_final_video(assets):
     clips = []
     log_box = st.empty()
@@ -234,24 +250,22 @@ def create_final_video(assets):
         try:
             log_box.info(f"⚙️ Mengolah Scene {i+1}...")
             
-            # 1. Buka Gambar (PATCH ANTIALIAS SUDAH AKTIF DI ATAS)
+            # 1. Image Processing
             original_img = PIL.Image.open(asset['image'])
             if original_img.mode != 'RGB':
                 original_img = original_img.convert('RGB')
-            
-            # 2. Resize
             clean_img = original_img.resize((W, H), PIL.Image.LANCZOS)
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
                 clean_img.save(f, quality=95)
                 clean_path = f.name
             
+            # 2. Audio Processing
             audio = AudioFileClip(asset['audio'])
             duration = audio.duration + 0.5
             
+            # 3. Video Clip
             img_clip = ImageClip(clean_path).set_duration(duration)
-            
-            # 3. Zoom Out (Aman)
             img_clip = img_clip.resize(lambda t: 1.1 - (0.005 * t)).set_position('center')
             
             final_clip = CompositeVideoClip([img_clip], size=(W, H)).set_audio(audio).set_fps(24)
@@ -333,7 +347,7 @@ if not st.session_state['generated_scenes']:
                 if isinstance(res, list):
                     st.session_state['generated_scenes'] = res
                     status.update(label="✅ Berhasil!", state="complete", expanded=False)
-                    time.sleep(1) # Error "time not defined" sudah diperbaiki dengan import time di atas
+                    time.sleep(1)
                     st.rerun()
                 else:
                     status.update(label="❌ Gagal!", state="error")
