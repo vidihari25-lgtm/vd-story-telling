@@ -28,7 +28,7 @@ from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, Com
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="AI Director Pro (ElevenLabs Fix)", 
+    page_title="AI Director Pro (Debug Mode)", 
     page_icon="🎬", 
     layout="wide",
     initial_sidebar_state="expanded"
@@ -220,7 +220,7 @@ def generate_image_pollinations(prompt):
         return resp.content if resp.status_code == 200 else None
     except: return None
 
-# --- AUDIO ---
+# --- AUDIO (FIXED ERROR HANDLING) ---
 async def edge_tts_generate(text, voice, output_file):
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(output_file)
@@ -235,17 +235,13 @@ def generate_audio_openai(text, voice_name, api_key):
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
                 f.write(r.content)
                 return f.name
-        return None
-    except: return None
+        else:
+            return f"OpenAI Error: {r.text}"
+    except Exception as e: return f"OpenAI Connection: {e}"
 
 def generate_audio_elevenlabs(text, voice_id, api_key):
-    # MENERAPKAN PENGATURAN DARI KODE ANDA:
-    # URL dengan query param untuk kualitas audio tinggi (mp3_44100_128)
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}?output_format=mp3_44100_128"
-    
     headers = {"xi-api-key": api_key, "Content-Type": "application/json"}
-    
-    # Body payload
     data = {
         "text": text,
         "model_id": "eleven_multilingual_v2",
@@ -258,11 +254,11 @@ def generate_audio_elevenlabs(text, voice_id, api_key):
                 f.write(r.content)
                 return f.name
         else:
-            print(f"ElevenLabs Error: {r.text}")
-            return None
-    except: return None
+            return f"ElevenLabs Error ({r.status_code}): {r.text}"
+    except Exception as e: return f"ElevenLabs Connection: {e}"
 
 def audio_manager(text, provider, selected_voice, narr_lang_code):
+    # 1. MODE GRATIS (Edge-TTS) - FIX ASYNCIO
     if "Gratis" in provider:
         if narr_lang_code == "English":
             voice_id = "en-US-ChristopherNeural" if "Cowok" in selected_voice else "en-US-AriaNeural"
@@ -272,24 +268,32 @@ def audio_manager(text, provider, selected_voice, narr_lang_code):
         try:
             temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
             temp.close()
-            asyncio.run(edge_tts_generate(text, voice_id, temp.name))
+            
+            # --- FIX: Safe Asyncio Loop ---
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(edge_tts_generate(text, voice_id, temp.name))
+            loop.close()
+            # ------------------------------
+            
             return temp.name
-        except: return None
+        except Exception as e:
+            return f"Edge-TTS Error: {str(e)}"
         
+    # 2. OPENAI
     elif "OpenAI" in provider:
-        if not OPENAI_API_KEY: return None
+        if not OPENAI_API_KEY: return "Error: Missing OpenAI API Key"
         v_map = {"Cowok (Echo)": "echo", "Cowok (Onyx)": "onyx", "Cewek (Nova)": "nova", "Cewek (Shimmer)": "shimmer"}
         return generate_audio_openai(text, v_map.get(selected_voice, "alloy"), OPENAI_API_KEY)
     
+    # 3. ELEVENLABS
     elif "ElevenLabs" in provider:
-        if not ELEVENLABS_API_KEY: return None
-        # MAPPING VOICE ID (TERMASUK ROBB)
+        if not ELEVENLABS_API_KEY: return "Error: Missing ElevenLabs API Key"
         voice_map = {
             "Cowok (Adam)": "pNInz6obpgDQGcFmaJgB",
-            "Cowok (Robb)": "JBFqnCBsd6RMkjVDRZzb", # <-- ID ROBB DARI KODE ANDA
+            "Cowok (Robb)": "JBFqnCBsd6RMkjVDRZzb",
             "Cewek (Rachel)": "21m00Tcm4TlvDq8ikWAM"
         }
-        # Default ke Adam jika tidak ketemu
         vid = voice_map.get(selected_voice, "pNInz6obpgDQGcFmaJgB")
         return generate_audio_elevenlabs(text, vid, ELEVENLABS_API_KEY)
 
@@ -383,7 +387,6 @@ with st.sidebar:
             voice_option = st.selectbox("Model:", ["Cowok (Echo)", "Cowok (Onyx)", "Cewek (Nova)", "Cewek (Shimmer)"])
         elif "ElevenLabs" in tts_provider:
             if not ELEVENLABS_API_KEY: st.error("❌ Need API Key")
-            # --- ROBB SUDAH DITAMBAHKAN ---
             voice_option = st.selectbox("Model:", ["Cowok (Robb)", "Cowok (Adam)", "Cewek (Rachel)"])
 
     num_scenes = st.slider("Jumlah Scene:", 1, 30, 5)
@@ -475,7 +478,11 @@ else:
         
         for idx, sc in enumerate(st.session_state['generated_scenes']):
             aud = audio_manager(sc['narration'], tts_provider, voice_option, narr_lang)
-            if not aud: st.error(f"Audio Error Scene {idx+1}"); st.stop()
+            
+            # CEK APAKAH AUDIO BERHASIL
+            if not aud or "Error" in str(aud): 
+                st.error(f"❌ Gagal Audio Scene {idx+1}: {aud}")
+                st.stop()
             
             img = None
             if st.session_state.get(f"up_{idx}"):
