@@ -20,14 +20,14 @@ import re
 import random
 import time
 import base64
-import textwrap
+import textwrap # Penting untuk subtitle rapi
 import streamlit.components.v1 as components
 from PIL import ImageDraw, ImageFont 
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip, TextClip
+from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="AI Director Pro (Cinematic Sub)", 
+    page_title="AI Director Pro (Fixed Sub)", 
     page_icon="🎬", 
     layout="wide",
     initial_sidebar_state="expanded"
@@ -85,49 +85,46 @@ def trigger_auto_download(file_path):
         components.html(md, height=0)
     except: pass
 
-# --- FUNGSI SUBTITLE KEREN (CINEMATIC STYLE) ---
+# --- FUNGSI SUBTITLE (REVISI: KECIL, STABIL, TENGAH) ---
 def draw_cinematic_subtitle(pil_img, text):
     try:
         draw = ImageDraw.Draw(pil_img)
         W, H = pil_img.size
         
-        # 1. KONFIGURASI FONT BESAR
-        # Kita set ukuran font 6% dari tinggi video (Standar Youtube/Netflix)
-        font_size = int(H * 0.06) 
+        # 1. UKURAN FONT: 3.5% dari Tinggi Layar (Standar Film)
+        # Tidak terlalu besar, tidak terlalu kecil
+        font_size = int(H * 0.035) 
         
-        # Coba load font tebal (Bold) agar jelas
-        # Urutan prioritas: Arial Bold -> DejaVuSans Bold -> Default
+        # Font Selection
         font = None
-        font_candidates = ["arialbd.ttf", "arial.ttf", "DejaVuSans-Bold.ttf", "Roboto-Bold.ttf"]
-        
+        font_candidates = ["arialbd.ttf", "arial.ttf", "Roboto-Bold.ttf", "DejaVuSans-Bold.ttf"]
         for f_name in font_candidates:
             try:
                 font = ImageFont.truetype(f_name, font_size)
                 break
             except: continue
+        if font is None: font = ImageFont.load_default()
             
-        if font is None:
-            font = ImageFont.load_default() # Fallback terakhir
-            
-        # 2. WRAPPING TEXT (Agar rapi di tengah)
-        # Hitung kira-kira berapa huruf muat dalam 90% lebar layar
-        # Asumsi rata-rata lebar huruf adalah 0.5 * font_size
+        # 2. WRAPPING TEXT (Agar tidak nabrak pinggir)
+        # Hitung karakter maksimal per baris (Lebar aman 90% layar)
         avg_char_width = font_size * 0.5
-        max_chars = int((W * 0.85) / avg_char_width)
+        chars_per_line = int((W * 0.9) / avg_char_width)
         
-        wrapped_lines = textwrap.wrap(text, width=max_chars)
+        wrapper = textwrap.TextWrapper(width=chars_per_line, break_long_words=False)
+        lines = wrapper.wrap(text)
         
-        # 3. MENGGAMBAR TEKS (YELLOW + BLACK STROKE)
-        # Hitung posisi Y (Mulai dari bawah, naik ke atas)
+        # 3. POSISI FIX DI BAWAH (STABIL)
+        # Kita hitung dari bawah ke atas dengan margin tetap
         line_height = font_size * 1.3
-        total_height = len(wrapped_lines) * line_height
+        total_text_height = len(lines) * line_height
         
-        # Posisi mulai Y (sedikit di atas batas bawah)
-        current_y = H - total_height - (H * 0.05) 
+        # Margin bawah tetap: 8% dari bawah layar
+        bottom_margin = H * 0.08
+        current_y = H - bottom_margin - total_text_height
         
-        for line in wrapped_lines:
-            # Hitung lebar teks ini agar bisa ditengah (centering)
-            # Karena getsize deprecated di PIL baru, kita pakai getbbox atau estimasi
+        # 4. GAMBAR TEKS
+        for line in lines:
+            # Hitung lebar baris ini untuk centering
             try:
                 bbox = draw.textbbox((0, 0), line, font=font)
                 text_w = bbox[2] - bbox[0]
@@ -136,15 +133,9 @@ def draw_cinematic_subtitle(pil_img, text):
             
             x_pos = (W - text_w) / 2
             
-            # --- EFEK OUTLINE TEBAL (STROKE) ---
-            # Kita gambar teks warna hitam berkali-kali di sekelilingnya
-            outline_range = 3 # Ketebalan stroke
-            for dx in range(-outline_range, outline_range+1):
-                for dy in range(-outline_range, outline_range+1):
-                    draw.text((x_pos+dx, current_y+dy), line, font=font, fill="black")
-
-            # --- EFEK UTAMA (TEKS KUNING EMAS) ---
-            draw.text((x_pos, current_y), line, font=font, fill="#FFD700") # Gold Color
+            # STROKE HITAM (Agar terbaca di gambar terang)
+            # Menggunakan parameter stroke_width (lebih rapi)
+            draw.text((x_pos, current_y), line, font=font, fill="#FFD700", stroke_width=2, stroke_fill="black")
             
             current_y += line_height
             
@@ -166,6 +157,8 @@ def extract_json(text):
 
 def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_scenes, language):
     genai.configure(api_key=api_key)
+    
+    # INSTRUKSI BAHASA YANG TEGAS
     lang_instruction = "Narration MUST be in Indonesian Language." if language == "Indonesia" else "Narration MUST be in English Language."
     
     prompt = f"""
@@ -176,14 +169,14 @@ def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_sce
     Requirement: 
     1. Create EXACTLY {target_scenes} scenes.
     2. {lang_instruction}
-    3. Keep narration concise (max 2 sentences per scene) for better video flow.
+    3. Keep narration concise (max 2 short sentences per scene) suitable for subtitles.
     
     OUTPUT JSON ARRAY ONLY:
     [
         {{
             "scene_number": 1,
             "narration": "Concise narration text...",
-            "image_prompt": "Cinematic shot of [Character], [Action], 8k, bright lighting"
+            "image_prompt": "Cinematic shot of [Character], [Action], 8k, bright lighting, wide angle"
         }}
     ]
     """
@@ -254,7 +247,7 @@ def audio_manager(text, provider, selected_voice):
         vid = "pNInz6obpgDQGcFmaJgB" if "Adam" in selected_voice else "21m00Tcm4TlvDq8ikWAM"
         return generate_audio_elevenlabs(text, vid, ELEVENLABS_API_KEY)
 
-# --- VIDEO ENGINE (CINEMATIC) ---
+# --- VIDEO ENGINE ---
 def create_final_video(assets, use_subtitle=False):
     clips = []
     log_box = st.empty()
@@ -272,7 +265,7 @@ def create_final_video(assets, use_subtitle=False):
                 original_img = original_img.convert('RGB')
             clean_img = original_img.resize((W, H), PIL.Image.LANCZOS)
             
-            # 2. Add Cinematic Subtitle
+            # 2. Add Subtitle (REVISI BARU)
             if use_subtitle and 'text' in asset:
                 clean_img = draw_cinematic_subtitle(clean_img, asset['text'])
             
@@ -286,9 +279,8 @@ def create_final_video(assets, use_subtitle=False):
             
             img_clip = ImageClip(clean_path).set_duration(duration)
             
-            # ZOOM EFFECT (Membuat gambar bergerak halus)
-            img_clip = img_clip.resize(lambda t: 1.0 + (0.005 * t))  # Zoom In pelan
-            # img_clip = img_clip.set_position('center') 
+            # ZOOM EFFECT HALUS
+            img_clip = img_clip.resize(lambda t: 1.0 + (0.005 * t))
             
             final_clip = CompositeVideoClip([img_clip], size=(W, H)).set_audio(audio).set_fps(24)
             clips.append(final_clip)
@@ -324,7 +316,8 @@ def create_final_video(assets, use_subtitle=False):
 with st.sidebar:
     st.markdown("### 🎛️ Control Panel")
     
-    story_lang = st.selectbox("🌐 Bahasa:", ["Indonesia", "English"])
+    # 1. LANGUAGE SELECTOR
+    story_lang = st.selectbox("🌐 Bahasa Cerita (Subtitle):", ["Indonesia", "English"])
 
     with st.expander("🔊 Audio", expanded=True):
         tts_provider = st.radio("Provider:", ["Edge-TTS (Gratis)", "OpenAI (Pro)", "ElevenLabs (Ultra)"])
@@ -342,7 +335,7 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("**Output Options:**")
-    enable_subtitle = st.checkbox("📝 Subtitle Sinematik", value=True)
+    enable_subtitle = st.checkbox("📝 Subtitle Otomatis", value=True)
     auto_dl = st.checkbox("⬇️ Auto-Download Selesai Render", value=True)
     
     st.markdown("---")
@@ -403,7 +396,7 @@ else:
                         if data: st.session_state['ai_images_data'][i] = data
                 uploaded = st.file_uploader("Upload", key=f"up_{i}", label_visibility="collapsed")
                 
-                # GAMBAR KECIL (250px)
+                # GAMBAR KECIL (250px) - FIX TAMPILAN
                 if uploaded: st.image(uploaded, width=250)
                 elif i in st.session_state['ai_images_data']: st.image(st.session_state['ai_images_data'][i], width=250)
                 else: st.info("Kosong")
