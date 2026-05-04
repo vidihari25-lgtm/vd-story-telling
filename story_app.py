@@ -29,7 +29,7 @@ from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, Com
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="AI Director Pro (+Style & Save)", 
+    page_title="AI Director Pro (Jalur Hemat)", 
     page_icon="🎬", 
     layout="wide",
     initial_sidebar_state="expanded"
@@ -63,11 +63,9 @@ st.markdown("""
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 except:
-    st.error("⚠️ EROR: `GEMINI_API_KEY` tidak ditemukan di secrets.toml!")
+    st.error("⚠️ EROR: `GEMINI_API_KEY` nggak nemu di secrets.toml bang! Masukin dulu yak.")
     st.stop()
 
-# Tambahan Key buat Grok, EleventLabs, OpenAI
-XAI_API_KEY = st.secrets.get("XAI_API_KEY", None) 
 ELEVENLABS_API_KEY = st.secrets.get("ELEVENLABS_API_KEY", None)
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", None)
 
@@ -157,7 +155,7 @@ def create_subtitle_layer(text, width, height):
         return subtitle_img
     except Exception as e: return None
 
-# --- AI LOGIC ---
+# --- AI LOGIC (GEMINI BALIK LAGI!) ---
 def extract_json(text):
     try:
         text = re.sub(r'```json\s*', '', text)
@@ -173,8 +171,10 @@ def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_sce
     Role: Professional Movie Director.
     Story Context: '{input_text}' (Mode: {input_mode})
     CAST: {char_desc}
+    TARGET AUDIENCE: Indonesian local look.
+    TONE: Gaya bahasa santai/receh untuk TikTok.
     RULES:
-    1. 'narration' MUST be in {narr_lang}.
+    1. 'narration' MUST be in {narr_lang} (buat gaya bahasanya asik, receh, relate sama warga +62).
     2. 'subtitle' MUST be in {sub_lang}.
     3. Create EXACTLY {target_scenes} scenes.
     OUTPUT JSON ARRAY ONLY:
@@ -188,16 +188,16 @@ def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_sce
     ]
     """
     try:
-        model = genai.GenerativeModel('gemini-flash-latest')
+        # Pake Flash biar ngebut dan gratisan kuotanya banyak
+        model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
         result = extract_json(response.text)
         if not result: return f"JSON Error. Raw: {response.text[:100]}..."
         return result
-    except Exception as e: return f"API ERROR: {str(e)}"
+    except Exception as e: return f"API ERROR GEMINI: {str(e)}"
 
-# --- FUNGSI BARU: GENERATE GAMBAR PAKE GROK ---
-def generate_image_grok(prompt, style_name, api_key):
-    # Mapping style yang asik
+def generate_image_pollinations(prompt, style_name):
+    # Mapping style kece
     style_prompts = {
         "Cinematic Realism": "cinematic lighting, photorealistic, 8k, movie scene, masterpiece",
         "3D Disney Animation": "3d style, disney pixar style, cute, vibrant colors, 3d render, cgsociety",
@@ -210,36 +210,16 @@ def generate_image_grok(prompt, style_name, api_key):
     
     selected_style = style_prompts.get(style_name, "")
     
-    # INJECT otomatis target audiens lokal biar vibe-nya dapet abis!
+    # INJECT otomatis target audiens lokal + style
     full_prompt = f"{prompt}, Indonesian local look, {selected_style}"
     
-    url = "https://api.x.ai/v1/images/generations"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    
-    # Payload ke Grok
-    data = {
-        "model": "grok-imagine-image",
-        "prompt": full_prompt,
-        "n": 1
-    }
-    
+    clean = requests.utils.quote(full_prompt)
+    seed = random.randint(1, 99999)
+    url = f"https://image.pollinations.ai/prompt/{clean}?width=1280&height=720&seed={seed}&nologo=true&model=flux"
     try:
-        resp = requests.post(url, headers=headers, json=data, timeout=60)
-        if resp.status_code == 200:
-            # Ambil URL gambar dari JSON
-            image_url = resp.json()['data'][0]['url']
-            # Download gambarnya jadi data mentah
-            img_resp = requests.get(image_url)
-            return img_resp.content if img_resp.status_code == 200 else None
-        else:
-            st.error(f"⚠️ Waduh, Grok ngambek: {resp.text}")
-            return None
-    except Exception as e:
-        st.error(f"⚠️ Error koneksi ke Grok: {e}")
-        return None
+        resp = requests.get(url, timeout=30)
+        return resp.content if resp.status_code == 200 else None
+    except: return None
 
 # --- AUDIO GENERATION ---
 async def edge_tts_generate(text, voice, output_file):
@@ -432,13 +412,13 @@ with st.sidebar:
         """
         <div style="text-align: center; font-size: 12px; color: #6b7280;">
             © 2026 <b>VDMotionStudio</b><br>
-            <i>Created with AI Director Pro</i>
+            <i>Created with AI Director Pro (BPJS Edition)</i>
         </div>
         """, 
         unsafe_allow_html=True
     )
 
-st.markdown('<h1 class="title-text">AI Director Pro</h1>', unsafe_allow_html=True)
+st.markdown('<h1 class="title-text">AI Director Pro (Hemat)</h1>', unsafe_allow_html=True)
 
 if not st.session_state['generated_scenes']:
     tab1, tab2 = st.tabs(["🎭 Karakter", "📜 Cerita"])
@@ -462,9 +442,10 @@ if not st.session_state['generated_scenes']:
             title_candidate = " ".join(story.split()[:5]) if story else "Untitled"
             st.session_state['project_title'] = title_candidate
             
-            with st.status("🤖 AI Bekerja...", expanded=True) as status:
-                st.write("Menulis naskah...")
+            with st.status("🤖 Gemini lagi ngetik...", expanded=True) as status:
+                st.write("Mikirin *jokes* receh...")
                 chars = f"1: {char1}. 2: {char2}. 3: {char3}. 4: {char4}."
+                # SEKARANG PAKE GEMINI LAGI BIAR GRATIS
                 res = generate_scenes_logic(GEMINI_API_KEY, story, mode, chars, num_scenes, narr_lang, sub_lang)
                 if isinstance(res, list):
                     st.session_state['generated_scenes'] = res
@@ -474,7 +455,7 @@ if not st.session_state['generated_scenes']:
                 else:
                     status.update(label="❌ Gagal", state="error")
                     st.error(res)
-        else: st.warning("Isi cerita dulu.")
+        else: st.warning("Isi cerita dulu bosku, pantang kosong.")
 
 else:
     st.markdown(f"### 🎬 Editor ({len(st.session_state['generated_scenes'])}) | Style: {art_style}")
@@ -488,13 +469,10 @@ else:
                 with st.expander("Prompt"): st.code(scene['image_prompt'])
             with cols[2]:
                 if st.button(f"🎲 Generate ({art_style})", key=f"gen_{i}", use_container_width=True):
-                    # CEK API KEY DULU SEBELUM GAS
-                    if not XAI_API_KEY:
-                        st.error("🔑 Jangan lupa isi `XAI_API_KEY` di secrets.toml ya ngab!")
-                    else:
-                        with st.spinner("Si Grok lagi nggambar..."):
-                            data = generate_image_grok(scene['image_prompt'], art_style, XAI_API_KEY)
-                            if data: st.session_state['ai_images_data'][i] = data
+                    with st.spinner("Pollinations lagi nggambar..."):
+                        # PAKE POLLINATIONS BUAT GAMBAR GRATISAN
+                        data = generate_image_pollinations(scene['image_prompt'], art_style)
+                        if data: st.session_state['ai_images_data'][i] = data
                 
                 uploaded = st.file_uploader("Upload", key=f"up_{i}", label_visibility="collapsed")
                 if uploaded: st.image(uploaded, width=250)
