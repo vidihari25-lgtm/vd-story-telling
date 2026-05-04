@@ -66,6 +66,8 @@ except:
     st.error("⚠️ EROR: `GEMINI_API_KEY` tidak ditemukan di secrets.toml!")
     st.stop()
 
+# Tambahan Key buat Grok, EleventLabs, OpenAI
+XAI_API_KEY = st.secrets.get("XAI_API_KEY", None) 
 ELEVENLABS_API_KEY = st.secrets.get("ELEVENLABS_API_KEY", None)
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", None)
 
@@ -193,8 +195,9 @@ def generate_scenes_logic(api_key, input_text, input_mode, char_desc, target_sce
         return result
     except Exception as e: return f"API ERROR: {str(e)}"
 
-def generate_image_pollinations(prompt, style_name):
-    # UPDATE: MENAMBAHKAN ART STYLE KE PROMPT
+# --- FUNGSI BARU: GENERATE GAMBAR PAKE GROK ---
+def generate_image_grok(prompt, style_name, api_key):
+    # Mapping style yang asik
     style_prompts = {
         "Cinematic Realism": "cinematic lighting, photorealistic, 8k, movie scene, masterpiece",
         "3D Disney Animation": "3d style, disney pixar style, cute, vibrant colors, 3d render, cgsociety",
@@ -206,15 +209,37 @@ def generate_image_pollinations(prompt, style_name):
     }
     
     selected_style = style_prompts.get(style_name, "")
-    full_prompt = f"{prompt}, {selected_style}"
     
-    clean = requests.utils.quote(full_prompt)
-    seed = random.randint(1, 99999)
-    url = f"https://image.pollinations.ai/prompt/{clean}?width=1280&height=720&seed={seed}&nologo=true&model=flux"
+    # INJECT otomatis target audiens lokal biar vibe-nya dapet abis!
+    full_prompt = f"{prompt}, Indonesian local look, {selected_style}"
+    
+    url = "https://api.x.ai/v1/images/generations"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    # Payload ke Grok
+    data = {
+        "model": "grok-imagine-image",
+        "prompt": full_prompt,
+        "n": 1
+    }
+    
     try:
-        resp = requests.get(url, timeout=30)
-        return resp.content if resp.status_code == 200 else None
-    except: return None
+        resp = requests.post(url, headers=headers, json=data, timeout=60)
+        if resp.status_code == 200:
+            # Ambil URL gambar dari JSON
+            image_url = resp.json()['data'][0]['url']
+            # Download gambarnya jadi data mentah
+            img_resp = requests.get(image_url)
+            return img_resp.content if img_resp.status_code == 200 else None
+        else:
+            st.error(f"⚠️ Waduh, Grok ngambek: {resp.text}")
+            return None
+    except Exception as e:
+        st.error(f"⚠️ Error koneksi ke Grok: {e}")
+        return None
 
 # --- AUDIO GENERATION ---
 async def edge_tts_generate(text, voice, output_file):
@@ -336,17 +361,14 @@ def create_final_video(assets, use_subtitle=False, bgm_path=None, bgm_vol=0.1):
             except Exception as e:
                 st.warning(f"⚠️ Gagal menambahkan musik: {e}")
 
-        # --- LOGIKA PENYIMPANAN OTOMATIS SESUAI JUDUL ---
         output_folder = "Hasil_Video"
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
             
-        # Bersihkan judul proyek agar aman jadi nama file
         safe_title = re.sub(r'[\\/*?:"<>|]', "", st.session_state['project_title'])
-        safe_title = safe_title.replace(" ", "_")[:50] # Ambil 50 karakter pertama
+        safe_title = safe_title.replace(" ", "_")[:50]
         timestamp = int(time.time())
         
-        # Nama file final: Judul_Timestamp.mp4
         final_filename = f"{safe_title}_{timestamp}.mp4"
         final_path = os.path.join(output_folder, final_filename)
         
@@ -364,7 +386,6 @@ def create_final_video(assets, use_subtitle=False, bgm_path=None, bgm_vol=0.1):
 with st.sidebar:
     st.markdown("### 🎛️ Control Panel")
     
-    # 1. ART STYLE SELECTION (FITUR BARU)
     art_style = st.selectbox(
         "🎨 Gaya Visual (Art Style):", 
         ["Cinematic Realism", "3D Disney Animation", "Anime / Manga", "Cyberpunk", "Oil Painting", "Watercolor", "Vintage Film"]
@@ -438,8 +459,6 @@ if not st.session_state['generated_scenes']:
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("✨ Buat Skenario", type="primary", use_container_width=True):
         if story:
-            # SIMPAN JUDUL PROYEK UNTUK NAMA FILE NANTI
-            # Ambil 5 kata pertama dari cerita sebagai judul
             title_candidate = " ".join(story.split()[:5]) if story else "Untitled"
             st.session_state['project_title'] = title_candidate
             
@@ -468,11 +487,15 @@ else:
                 st.markdown(f"**📝 ({sub_lang}):** {scene.get('subtitle', '')}")
                 with st.expander("Prompt"): st.code(scene['image_prompt'])
             with cols[2]:
-                # UPDATE: Pass 'art_style' ke fungsi generate gambar
                 if st.button(f"🎲 Generate ({art_style})", key=f"gen_{i}", use_container_width=True):
-                    with st.spinner("..."):
-                        data = generate_image_pollinations(scene['image_prompt'], art_style)
-                        if data: st.session_state['ai_images_data'][i] = data
+                    # CEK API KEY DULU SEBELUM GAS
+                    if not XAI_API_KEY:
+                        st.error("🔑 Jangan lupa isi `XAI_API_KEY` di secrets.toml ya ngab!")
+                    else:
+                        with st.spinner("Si Grok lagi nggambar..."):
+                            data = generate_image_grok(scene['image_prompt'], art_style, XAI_API_KEY)
+                            if data: st.session_state['ai_images_data'][i] = data
+                
                 uploaded = st.file_uploader("Upload", key=f"up_{i}", label_visibility="collapsed")
                 if uploaded: st.image(uploaded, width=250)
                 elif i in st.session_state['ai_images_data']: st.image(st.session_state['ai_images_data'][i], width=250)
